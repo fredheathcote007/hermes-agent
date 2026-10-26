@@ -3,45 +3,79 @@
 project_id: fermes-hermes
 issue: https://github.com/fredheathcote007/hermes-agent/issues/7
 workstream_id: memory-v2
-status: Full ReMe fork Stage 1 selected; plugin qualification pending
+priority: P1
+status: Full ReMe fork Stage 1 implemented, draft PR open; partial qualification PASSED, runtime acceptance NOT PASSED
 updated: 2026-10-26 Australia/Perth
+source_reme_fork: https://github.com/fredheathcote007/fermes-reme
+source_reme_branch: fermes/hermes-provider-stage1
+source_reme_commit: dc34a7fbbacf7ef9743bedb0d994d4fc4da6ad71
+reme_draft_pr: https://github.com/fredheathcote007/fermes-reme/pull/1
+hermes_deferred_sqlite_draft_pr: https://github.com/fredheathcote007/hermes-agent/pull/19
 
-## Approved implementation direction
+## Approved direction
 
-DEC-004 supersedes the previous native-first proposal. Full ReMe fork:
-https://github.com/fredheathcote007/fermes-reme
-Stage 1 local branch: fermes/hermes-provider-stage1
-Upstream source baseline: agentscope-ai/ReMe 363e497
-Initial mode: ReMe embedded Hermes MemoryProvider with existing file store/BM25,
-no mandatory cloud/service dependency. Existing vector functionality is not deleted;
-additional/revised SQLite/vector implementation is explicitly deferred.
+DEC-004: Full ReMe fork first. Maintain ReMe file-backed workspace and BM25.
+Stage 1 uses embedded Hermes MemoryProvider and dedicated local-only
+`reme/config/fermes-hermes-stage1.yaml` with CLI/no network listener,
+no Dream/proactive scheduled jobs, and loopback-only LLM defaults. Profile
+config must explicitly choose this file, not upstream ReMe `default`.
+SQLite ledger and new vector backend are deferred, Hermes PR #19 stays draft.
+No Hindsight or Project Coordinator service dependency.
 
-Existing Hermes SQLite/FTS5 ledger in draft PR #19 remains an unwired,
-unmerged, independently reviewed reference. Do not activate or merge it.
-Maintain Hermes provider and profile boundaries; preserve Qwen/LM Studio worktrees.
+## What changed on isolated ReMe fork
 
-## CI recovery
+- Fsynced, profile-local JSONL journal for accepted Hermes turns, private
+  directories/files, safe path/symlink handling, replay after interruption,
+  backoff and later-record processing after failures.
+- Stable journal IDs are sent via ReMe's existing `auto_memory(request_id)`
+  idempotency receipt interface through embedded/HTTP adapters.
+- Existing Hermes loader and plugin manager interfaces retained.
+- Focused GitHub-hosted Ubuntu 24.04 fork CI; no Blacksmith.
+- Independent Cursor findings and exact host evidence captured in fork docs.
+- Draft fork PR #1 is open and unmerged; Hermes active runtime unchanged.
 
-FHM-007 PR #19 inherited CI, Docker and Nix runs were queued/pending on
-unavailable Blacksmith runner labels. Previous Fermes fix: disable their PR
-triggers and provide a GitHub-hosted lightweight workflow. Current FHM-007
-workflow uses explicitly pinned ubuntu-24.04 because ubuntu-latest is
-migrating to Ubuntu 26.04 during 2026-10-19 to 2026-11-19.
-Validate new PR run and document conclusion before claiming recovered CI.
+## Verified evidence
 
-## Stage 1 next action
+- ReMe focused Hermes adapter suite: 47/47 PASS, log
+  `/tmp/fhm007/reme-stage1-final-host-tests.log`.
+- Real maintained Hermes plugin doctor PASS:
+  `/tmp/fhm007/reme-plugin-doctor-host.log`.
+- Real loader discovery/registration PASS in disposable HERMES_HOME:
+  `/tmp/fhm007/real-hermes-loader-smoke.log`.
+- Real ReMe embedded local BM25 retrieved synthetic file:
+  `/tmp/fhm007/offline-bm25-probe.log`.
+- Distinct alpha/beta profiles and workspaces: own synthetic evidence recalled,
+  other profile's token absent; fresh session and post-restart retrieval PASS:
+  `/tmp/fhm007/two-profile-bm25-probe.log`,
+  `/tmp/fhm007/real-provider-alpha.log`, `real-provider-beta.log`.
+- Stage 1 config resolves with no cron/Dream, CLI service and loopback model default.
+- ReMe CI `Fermes ReMe Stage 1 CI` run 40303028576 PASS on ubuntu-24.04;
+  ReMe full upstream workflows still checking; PR semantic title corrected and
+  replacement title-policy run 40303242396 PASS.
+- Code review in `docs/fermes/INDEPENDENT-REVIEW.md` says draft PR ready,
+  but **NO GO** for production or full FHM-007 acceptance.
 
-1. Verify fork's Hermes embedded provider against local Hermes v0.22.5 and
-   project plugin loader with isolated, disposable HERMES_HOME/workspace.
-2. Preserve local-only operation, source provenance and per-profile separation.
-3. Reproduce or rule out upstream ReMe known issues #660/#661/#666/#673
-   including hangs, interrupted batches, corrected transcripts and vector NaNs.
-4. Implement bounded fork fixes only after discriminating tests. Do not
-   introduce SQLite/vector replacement until plug-in functionality qualifies.
-5. Prove capture across sessions, correct recall, crash/restart, no lost
-   approved writes, injection resistance, cancellation and backup/recovery.
-6. Expose stable candidate-memory/lesson hooks for future SkillHone and
-   SkillOpt-Sleep, without permitting model-generated skill mutation.
+## Blocking/unverified capabilities
 
-Acceptance: No active Hermes deploy or main merge without independent review,
-documented acceptance evidence and owner approval. FHM-007 remains OPEN P1.
+- Real LLM-backed Hermes conversational auto-memory capture and evidence
+  provenance not yet proven. Dad-PC LM Studio currently only listens on
+  `127.0.0.1:1234` on Dad-PC; do not change bind/firewall without approval.
+- Real ReMe model write/receipt crash-window side-effect idempotency remains
+  untested end-to-end; journal ensures at-least-once, not universal exactly-once.
+- Same Hermes profile / same journal accessed by multiple processes is
+  unqualified; do not run multiple ReMe writer processes against same profile.
+- FHM-006 v2 precompress fail-closed checkpoint, poisoning resistance, and
+  future SkillHone / SkillOpt-Sleep promotion/rollback remain unqualified.
+- Shared ReMe workspace between identities is NOT authorised; per-profile
+  distinct workspace is required.
+- ReMe Dream issues #659, #660, #661 and pending patches #664, #668; Dream
+  remains disabled until independent qualification.
+- User approval is mandatory for any live deployment or main merge.
+
+## Exact next action
+
+Complete remaining inherited ReMe CI and triage real failures only. In isolated
+work, add deterministic tests of ReMe's real request_id replay receipts and
+same-profile multi-process spool safety/lock strategy; then separately qualify
+memory extraction through a safe local-model endpoint. Keep PR #1 draft and
+issue #7 OPEN P1. Preserve existing Qwen / LM Studio worktrees and draft PRs.
