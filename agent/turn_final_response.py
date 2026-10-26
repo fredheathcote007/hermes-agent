@@ -98,6 +98,22 @@ def finish_text_response(
     # of native Claude turns) is a summary written by a separate model, never the answer: it
     # takes the empty-response continuation below instead.
     _content = assistant_message.content
+    from agent.malformed_tool_call_recovery import (
+        discard_dropped_tool_call_scaffolding, has_unparsed_tool_syntax,
+        malformed_tool_call_result,
+    )
+    # Private reasoning may contain call-shaped text without invalidating a
+    # complete visible answer. Scan reasoning only if it would otherwise be
+    # promoted (empty visible answer), and only when tools are actually offered.
+    # This also avoids trapping answer-only turns on a zero-tool route.
+    _has_tools = bool(agent.valid_tool_names)
+    _malformed_tool_syntax = _has_tools and (
+        has_unparsed_tool_syntax(_content)
+        or (
+            (not isinstance(_content, str) or not _content.strip())
+            and has_unparsed_tool_syntax(None, agent._extract_reasoning(assistant_message))
+        )
+    )
     _promoted = None
     if (
         finish_reason == "stop"
@@ -111,6 +127,7 @@ def finish_text_response(
             for d in getattr(assistant_message, "reasoning_details", None) or ()
         )
         and answer_in_reasoning_capability(agent)
+        and not _malformed_tool_syntax
     ):
         _promoted = agent._extract_reasoning(assistant_message) or None
         if _promoted:
@@ -126,6 +143,38 @@ def finish_text_response(
     # Unmute: _mute_post_response from a housekeeping tool turn must not silence
     # empty-response warnings on the final response path.
     agent._mute_post_response = False
+
+    # Recover provider-parsed empty calls and visible unparsed markup through one bounded,
+    # ephemeral nudge path. Never turn markup into a tool call locally: only a subsequent
+    # provider response with structured tool_calls can reach tool execution.
+    _dropped_tool_call = finish_reason == "tool_calls" and not assistant_message.tool_calls
+    if _dropped_tool_call or _malformed_tool_syntax:
+        if getattr(agent, "_dropped_toolcall_retries", 0) < 3:
+            agent._dropped_toolcall_retries = getattr(agent, "_dropped_toolcall_retries", 0) + 1
+            logger.warning(
+                "Malformed or dropped tool-call response — re-prompting "
+                "(retry %d/3, model=%s provider=%s)",
+                agent._dropped_toolcall_retries, agent.model, agent.provider,
+            )
+            agent._emit_diagnostic_status(
+                "↻ Model returned malformed tool-call syntax or signaled a tool call without "
+                f"sending one — re-prompting ({agent._dropped_toolcall_retries}/3)"
+            )
+            final_msg = agent._build_assistant_message(assistant_message, finish_reason)
+            final_msg["_dropped_toolcall_nudge"] = True
+            append_message(messages, final_msg)
+            append_message(messages, {
+                "role": "user",
+                "content": _DROPPED_TOOLCALL_NUDGE_CONTENT,
+                "_dropped_toolcall_nudge": True,
+            })
+            agent._session_messages = messages
+            final_response = None
+            return _verdict("continue")
+        agent._dropped_toolcall_retries = 0
+        discard_dropped_tool_call_scaffolding(messages)
+        agent._session_messages = messages
+        return _verdict("return", malformed_tool_call_result(messages, api_call_count))
 
     # Think-block-only / empty content: recovery path.
     if not agent._has_content_after_think_block(final_response):
@@ -286,40 +335,12 @@ def finish_text_response(
         # real reply; ``build_api_messages`` substitutes ``api_content`` on the wire.
         final_msg["api_content"] = final_response
 
-    # Dropped tool-call recovery (copilot/Claude): finish_reason="tool_calls" with empty
-    # tool_calls would end the turn unstarted; re-prompt (max 3 CONSECUTIVE stalls).
-    if (
-        finish_reason == "tool_calls"
-        and not assistant_message.tool_calls
-        and getattr(agent, "_dropped_toolcall_retries", 0) < 3
-    ):
-        agent._dropped_toolcall_retries = getattr(agent, "_dropped_toolcall_retries", 0) + 1
-        logger.warning(
-            "finish_reason=tool_calls with empty tool_calls array "
-            "(narration only) — re-prompting to emit the call "
-            "(retry %d/3, model=%s provider=%s)",
-            agent._dropped_toolcall_retries, agent.model, agent.provider,
-        )
-        agent._emit_diagnostic_status(
-            "↻ Model signaled a tool call but sent none — "
-            f"re-prompting ({agent._dropped_toolcall_retries}/3)"
-        )
-        # Both halves of the re-prompt pair are ephemeral scaffolding: never persisted,
-        # and the finalization pop strips an unanswered tail pair.
-        final_msg["_dropped_toolcall_nudge"] = True
-        append_message(messages, final_msg)
-        append_message(messages, {
-            "role": "user",
-            "content": _DROPPED_TOOLCALL_NUDGE_CONTENT,
-            "_dropped_toolcall_nudge": True,
-        })
-        agent._session_messages = messages
-        final_response = None
-        return _verdict("continue")
-
     # Genuine turn end (no dropped-tool-call mismatch): clear stall budget.
     agent._dropped_toolcall_retries = 0
 
+    # All malformed-call retry pairs are transient, even if the model needed
+    # several retries. Drop them before any stop gate, session or result write.
+    discard_dropped_tool_call_scaffolding(messages)
     # Pop prefill / empty-retry scaffolding before the final response or
     # verification follow-up; it must not become durable transcript.
     while (

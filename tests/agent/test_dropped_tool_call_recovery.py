@@ -30,7 +30,14 @@ def loop_agent():
     ``.chat.completions.create``."""
     from run_agent import AIAgent
     with (
-        patch("model_tools.get_tool_definitions", return_value=[]),
+        patch("model_tools.get_tool_definitions", return_value=[{
+            "type": "function",
+            "function": {
+                "name": "terminal",
+                "description": "Run a terminal command.",
+                "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+            },
+        }]),
         patch("model_tools.check_toolset_requirements", return_value={}),
         patch("agent.process_bootstrap.OpenAI"),
     ):
@@ -67,6 +74,192 @@ def _dropped_tool_call_response(content: str):
 
 
 class TestDroppedToolCallRecovery:
+    @pytest.mark.parametrize("markup", [
+        '<function=terminal>{"command":"pwd"}',
+        '<tool_call>{"name":"terminal","arguments":{"command":"pwd"}}',
+        '<tool_call><arg_key>command</arg_key><arg_value>pwd',
+    ])
+    def test_visible_malformed_markup_reprompts_but_never_executes(self, loop_agent, markup):
+        """Raw Qwen/GLM-style markup is only a recovery signal, never a tool invocation."""
+        from tests.agent.test_run_agent import _mock_response
+
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(content=markup, finish_reason="stop"),
+            _mock_response(content="Recovered answer.", finish_reason="stop"),
+        ]
+        loop_agent._execute_tool_calls = MagicMock()
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+        ):
+            result = loop_agent.run_conversation("check this")
+
+        assert loop_agent.client.chat.completions.create.call_count == 2
+        assert result["final_response"] == "Recovered answer."
+        loop_agent._execute_tool_calls.assert_not_called()
+        assert not any(m.get("role") == "tool" for m in result["messages"] if isinstance(m, dict))
+
+    def test_unknown_markup_is_not_promoted_or_executed(self, loop_agent):
+        """Unknown names get a retry and cannot become a structured tool call."""
+        from tests.agent.test_run_agent import _mock_response
+
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(content='<function=not_offered>{"x":1}', finish_reason="stop"),
+            _mock_response(content="I could not use that tool.", finish_reason="stop"),
+        ]
+        loop_agent._execute_tool_calls = MagicMock()
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+        ):
+            result = loop_agent.run_conversation("do it")
+
+        assert loop_agent.client.chat.completions.create.call_count == 2
+        assert "not_offered" not in result["final_response"]
+        loop_agent._execute_tool_calls.assert_not_called()
+
+    @pytest.mark.parametrize("quoted", [
+        'The syntax is `<function=terminal>` in docs.',
+        '```xml\n<function=terminal>{"command":"pwd"}\n```',
+    ])
+    def test_quoted_markup_does_not_reprompt(self, loop_agent, quoted):
+        from tests.agent.test_run_agent import _mock_response
+
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(content=quoted, finish_reason="stop"),
+        ]
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+        ):
+            result = loop_agent.run_conversation("explain syntax")
+
+        assert loop_agent.client.chat.completions.create.call_count == 1
+        assert "function=terminal" in result["final_response"]
+
+    @pytest.mark.parametrize("reasoning", [
+        '<function=terminal>{"command":"pwd"}',
+        '<tool>\n<parameter=name>terminal</parameter><parameter=arguments>pwd',
+        '<tool_call>{"name":"terminal","arguments":{"command":"pwd"}}',
+    ])
+    def test_reasoning_only_malformed_markup_is_retried_not_promoted(self, loop_agent, reasoning):
+        from tests.agent.test_run_agent import _mock_response
+
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(content="", reasoning=reasoning, finish_reason="stop"),
+            _mock_response(content="Recovered answer.", finish_reason="stop"),
+        ]
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+            patch("agent.turn_final_response.answer_in_reasoning_capability", return_value=True),
+        ):
+            result = loop_agent.run_conversation("check this")
+
+        assert loop_agent.client.chat.completions.create.call_count == 2
+        assert result["final_response"] == "Recovered answer."
+
+    def test_complete_visible_answer_ignores_private_reasoning_markup(self, loop_agent):
+        from tests.agent.test_run_agent import _mock_response
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(
+                content="The result is ready.",
+                reasoning='<function=terminal>{"command":"pwd"}',
+                finish_reason="stop",
+            ),
+        ]
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+        ):
+            result = loop_agent.run_conversation("answer my question")
+        assert loop_agent.client.chat.completions.create.call_count == 1
+        assert result["completed"] is True
+        assert result["final_response"] == "The result is ready."
+
+    def test_plain_mention_of_function_tag_is_not_call(self, loop_agent):
+        from tests.agent.test_run_agent import _mock_response
+        text = "See the <function=terminal> element in the Qwen template docs."
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(content=text, finish_reason="stop"),
+        ]
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+        ):
+            result = loop_agent.run_conversation("explain syntax")
+        assert loop_agent.client.chat.completions.create.call_count == 1
+        assert result["final_response"] == text
+
+    def test_no_tools_does_not_treat_markup_as_executable_request(self, loop_agent):
+        from tests.agent.test_run_agent import _mock_response
+        loop_agent.tools = []
+        loop_agent.valid_tool_names = set()
+        text = 'A syntax example is <function=terminal>{"command":"pwd"}.'
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(content=text, finish_reason="stop"),
+        ]
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+        ):
+            result = loop_agent.run_conversation("quote the format")
+        assert loop_agent.client.chat.completions.create.call_count == 1
+        assert result["final_response"] == text
+
+    def test_multi_retry_scaffolding_is_removed_on_success(self, loop_agent):
+        from tests.agent.test_run_agent import _mock_response
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(content='<function=terminal>{"command":"pwd"}', finish_reason="stop"),
+            _mock_response(content='<tool_call>{"name":"terminal","arguments":{}}', finish_reason="stop"),
+            _mock_response(content="Recovered answer.", finish_reason="stop"),
+        ]
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+        ):
+            result = loop_agent.run_conversation("do a harmless check")
+        assert loop_agent.client.chat.completions.create.call_count == 3
+        assert result["completed"] is True
+        assert not any(m.get("_dropped_toolcall_nudge") for m in result["messages"] if isinstance(m, dict))
+
+    def test_turn_start_resets_stale_retry_budget(self, loop_agent):
+        from agent.turn_context import _reset_per_turn_agent_state
+        loop_agent._dropped_toolcall_retries = 2
+        _reset_per_turn_agent_state(loop_agent)
+        assert loop_agent._dropped_toolcall_retries == 0
+
+    def test_malformed_markup_retry_exhaustion_fails_turn(self, loop_agent):
+        from tests.agent.test_run_agent import _mock_response
+
+        loop_agent.client.chat.completions.create.side_effect = [
+            _mock_response(content='<function=terminal>{"command":"pwd"}', finish_reason="stop")
+            for _ in range(8)
+        ]
+        loop_agent._execute_tool_calls = MagicMock()
+        with (
+            patch.object(loop_agent, "_persist_session"),
+            patch.object(loop_agent, "_save_trajectory"),
+            patch.object(loop_agent, "_cleanup_task_resources"),
+        ):
+            result = loop_agent.run_conversation("check this")
+
+        assert loop_agent.client.chat.completions.create.call_count == 4
+        assert result["failed"] is True
+        assert result["completed"] is False
+        assert "not completed" in result["final_response"]
+        assert "terminal" not in result["final_response"]
+        loop_agent._execute_tool_calls.assert_not_called()
+        assert not any(m.get("_dropped_toolcall_nudge") for m in result["messages"] if isinstance(m, dict))
+
     def test_dropped_tool_call_reprompts_instead_of_exiting(self, loop_agent):
         """finish_reason=tool_calls with an empty tool_calls array must
         re-prompt the model to emit the call rather than exiting the loop
@@ -191,4 +384,3 @@ class TestDroppedToolCallRecovery:
             "_dropped_toolcall_nudge messages must be classified as "
             "ephemeral scaffolding so they are never persisted."
         )
-
