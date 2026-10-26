@@ -4,11 +4,11 @@ project_id: fermes-hermes
 issue: https://github.com/fredheathcote007/hermes-agent/issues/7
 workstream_id: memory-v2
 priority: P1
-status: Full ReMe fork Stage 1 implemented, draft PR open; partial qualification PASSED, runtime acceptance NOT PASSED
-updated: 2026-10-26 Australia/Perth
+status: Real-model memory write/restart/recall PASS; draft PR open, full production acceptance NOT PASSED
+updated: 2026-10-27 Australia/Perth
 source_reme_fork: https://github.com/fredheathcote007/fermes-reme
 source_reme_branch: fermes/hermes-provider-stage1
-source_reme_commit: fa93e09
+source_reme_commit: 76ac2982dede38b5d6f497e14ca532ea98a6dd88
 reme_draft_pr: https://github.com/fredheathcote007/fermes-reme/pull/1
 hermes_deferred_sqlite_draft_pr: https://github.com/fredheathcote007/hermes-agent/pull/19
 
