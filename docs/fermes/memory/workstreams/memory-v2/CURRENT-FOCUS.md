@@ -101,3 +101,10 @@ issue #7 OPEN P1. Preserve existing Qwen / LM Studio worktrees and draft PRs.
 - Independent Cursor review `/tmp/fhm007/cursor-capture-review.log` found valid real provider/tool path, distinguished synthetic scripted model versus actual LLM extraction and recommended CI/date/source changes, all applied. The first Codex sandbox attempt failed to execute real async I/O; it was terminated rather than accepting a replacement mocked file/backend test. Main ReMe worktree clean, separate exploratory worktree preserved as evidence.
 - GitHub ReMe CI triggered for `ab106af`, runs beginning 40310001274; statuses not yet verified PASS. Keep draft PR and issue OPEN; no merge/deploy or Dad-PC configuration changes.
 - Next: check CI, remediate any concrete regressions, validate real local-model inference over an already-authorised model route when available. Remain blocked for FHM-006 pre-compaction fail-closed, memory poisoning, provenance trust, mid-agent partial-crash semantics, and future SkillHone/SkillOpt-Sleep policy.
+
+## Verified CI closure for Stage 1 synthetic gate
+
+- ReMe commit `ab106af`: all eight GitHub PR workflows PASS, including Windows, Python quality, Python tests, CodeQL, Docker and Fermes Stage 1 Ubuntu CI.
+- Dedicated Fermes Ubuntu 24.04 workflow run `40310001274`: **66 passed in 18.54s**. Test creates and recalls a synthetic memory using actual ReMe provider/storage and deterministic model transport; no real LLM inference claim.
+- Project Coordinator inspected for existing LM Studio local listener/tunnel; no active model listener/tunnel identified. Do not alter Dad-PC binding or firewall without explicit security authorisation.
+- Stage 1 integration accepted as a **draft-only evidence milestone**, not production or full FHM-007 acceptance. Issue #7 remains OPEN P1 and ReMe fork PR #1 remains unmerged.
