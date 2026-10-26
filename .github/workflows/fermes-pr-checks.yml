@@ -95,3 +95,27 @@ jobs:
           else
             echo "FHM-004 live tests absent; skipped for this branch"
           fi
+      - name: FHM-005 fail-closed verification regressions (when present)
+        run: |
+          if [ -f tests/tools/test_delegate_verification_outcome.py ]; then
+            .venv/bin/ruff check agent/verification_stop.py agent/turn_finalizer.py \
+              agent/turn_context.py agent/turn_tool_round.py \
+              tools/delegate_tool.py tools/delegate_tool_child_run.py \
+              tests/agent/test_verification_stop.py \
+              tests/agent/test_verification_continuation_budget.py \
+              tests/tools/test_delegate_verification_outcome.py
+            mkdir -p "$RUNNER_TEMP/fermes-fhm005-tmp"
+            TMPDIR="$RUNNER_TEMP/fermes-fhm005-tmp" .venv/bin/python -m pytest \
+              -p no:cacheprovider -q --maxfail=1 \
+              tests/tools/test_delegate_verification_outcome.py \
+              tests/agent/test_verification_stop.py \
+              tests/agent/test_verification_continuation_budget.py \
+              tests/agent/test_verification_evidence.py \
+              tests/agent/test_verification_evidence_disabled.py \
+              tests/agent/test_verification_stop_caching.py \
+              tests/tools/test_delegate_completion_model.py \
+              tests/tools/test_delegate_external_provider.py \
+              tests/tools/test_async_delegation_failed_surface.py
+          else
+            echo "FHM-005 source absent; optional verification suite skipped"
+          fi

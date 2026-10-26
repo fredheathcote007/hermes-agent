@@ -598,6 +598,61 @@ def _build_result_entry(
     """Parent-visible result entry (status, exit_reason, tool trace, tokens, cost).
     ``status``/``exit_reason``/``truncated`` follow the ``_run_single_child`` contract; a structured failure always
     wins over the summary-presence heuristic (a fallback for legacy/mock results only)."""
+    # Child file tool receipts are captured by the child runtime, then merged into the
+    # owning parent's turn telemetry before the delegate result is returned. A child
+    # success string is not used as evidence; only landed mutation paths are propagated.
+    try:
+        parent_ref = getattr(child, "_delegate_parent_ref", None)
+        parent = getattr(child, "_delegate_verification_owner", None)
+        if parent is None:
+            parent = parent_ref() if callable(parent_ref) else None
+        child_paths = set(getattr(child, "_turn_file_mutation_paths", set()) or ())
+        tool_trace = _build_tool_trace(result.get("messages") or [])
+        command_tools = {"terminal", "execute_code"}
+        used_command_tool = any(str(item.get("tool", "")).lower() in command_tools for item in tool_trace)
+        if parent is not None and (used_command_tool and not child_paths or child_paths):
+            lock = getattr(parent, "_pending_delegated_verification_lock", None)
+            if lock is None:
+                import threading
+                lock = threading.RLock()
+                parent._pending_delegated_verification_lock = lock
+            with lock:
+                pending_paths = getattr(parent, "_pending_delegated_verification_paths", None)
+                if not isinstance(pending_paths, set):
+                    pending_paths = set()
+                    parent._pending_delegated_verification_paths = pending_paths
+                pending_paths.update(str(path) for path in child_paths if path)
+                if used_command_tool and not child_paths:
+                    parent._pending_unobservable_delegated_work = True
+                    parent._turn_unobservable_delegated_work = True
+        if parent is not None and child_paths:
+            parent_paths = getattr(parent, "_turn_file_mutation_paths", None)
+            if isinstance(parent_paths, set):
+                parent_paths.update(str(path) for path in child_paths if path)
+            from agent.verification_evidence import mark_workspace_edited
+            from agent.coding_context import project_facts_for
+            from pathlib import Path
+            sid = str(getattr(parent, "session_id", None) or "default")
+            for path in child_paths:
+                candidate = Path(str(path)).expanduser()
+                cwd = next((str(candidate.parent) for _ in (0,) if project_facts_for(candidate.parent)), None)
+                if cwd:
+                    mark_workspace_edited(session_id=sid, cwd=cwd, paths=[str(candidate)])
+    except Exception:
+        # If the owner still exists, make telemetry failure itself observable as
+        # unscoped delegated work so a successful child summary cannot hide it.
+        parent = getattr(child, "_delegate_verification_owner", None)
+        if parent is None:
+            parent_ref = getattr(child, "_delegate_parent_ref", None)
+            parent = parent_ref() if callable(parent_ref) else None
+        if parent is not None:
+            parent._turn_unobservable_delegated_work = True
+            parent._pending_unobservable_delegated_work = True
+        logger.debug("delegate mutation telemetry merge failed", exc_info=True)
+    finally:
+        # Attribution (or its fail-closed fallback) has finished. Keep the weak
+        # ref for lightweight lookup, but don't let a completed child pin its owner.
+        child._delegate_verification_owner = None
     summary = result.get("final_response") or ""
     # "(empty)" is run_agent's give-up sentinel after repeated empty LLM
     # responses (usually a transport bug) — a failure, not a success.

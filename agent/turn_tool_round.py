@@ -164,6 +164,13 @@ def run_tool_round(
             agent.stream_delta_callback(None)
 
     agent._execute_tool_calls(assistant_message, messages, effective_task_id, api_call_count)
+    # Terminal and code execution can write files without file-tool landed-path
+    # receipts. Under the opt-in verifier, retain a conservative marker for that
+    # command round when no file-tool path was recorded.
+    if not getattr(agent, "_turn_file_mutation_paths", set()) and any(
+        tc.function.name in {"terminal", "execute_code"} for tc in assistant_message.tool_calls
+    ):
+        agent._turn_unobservable_delegated_work = True
     from hermes_cli.observability.shared_metrics_harness import finish_tool_round
 
     finish_tool_round(agent)

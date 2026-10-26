@@ -337,6 +337,9 @@ def _build_child_agent(
         child._delegate_parent_ref = weakref.ref(parent_agent)
     except TypeError:
         child._delegate_parent_ref = None  # non-weakref-able test doubles
+    # The weakref above is for registry traversal. Detached children also need
+    # a live owner until completion so late verification telemetry has a target.
+    child._delegate_verification_owner = parent_agent
     # Sidebar marker: subagent sessions stay out of session pickers even when a
     # parent delete orphans them (mirrors /branch's ``_branched_from``).
     if parent_sid and getattr(child, "_session_init_model_config", None) is not None:

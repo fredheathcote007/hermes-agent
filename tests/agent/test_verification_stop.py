@@ -7,10 +7,12 @@ import pytest
 
 from agent.verification_evidence import (
     mark_workspace_edited,
+    record_verify_run,
     record_terminal_result,
 )
 from agent.verification_stop import (
     build_verify_on_stop_nudge,
+    verification_unresolved,
     verify_on_stop_enabled,
 )
 
@@ -112,10 +114,12 @@ def test_no_suite_nudge_uses_canonical_temp_dir(tmp_path, monkeypatch):
     )
 
     assert nudge is not None
-    assert str(real_temp) in nudge
-    assert str(linked_temp) not in nudge
+    # Without a canonical verifier, fail closed instead of suggesting an
+    # arbitrary temporary script as independent evidence.
+    assert "No independent Hermes verification recipe is available" in nudge
+    assert "hermes-verify-" not in nudge
 
-def test_ad_hoc_pass_satisfies_no_suite_stop_loop(tmp_path, monkeypatch):
+def test_ad_hoc_worker_pass_does_not_satisfy_independent_stop_gate(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")
     changed = str(tmp_path / "src" / "app.ts")
@@ -132,7 +136,7 @@ def test_ad_hoc_pass_satisfies_no_suite_stop_loop(tmp_path, monkeypatch):
     finally:
         script.unlink(missing_ok=True)
 
-    assert build_verify_on_stop_nudge(session_id="s1", changed_paths=[changed]) is None
+    assert build_verify_on_stop_nudge(session_id="s1", changed_paths=[changed]) is not None
 
 def test_nudge_attempts_are_bounded(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
@@ -146,6 +150,57 @@ def test_nudge_attempts_are_bounded(tmp_path, monkeypatch):
         attempts=2,
         max_attempts=2,
     ) is None
+
+
+def test_worker_command_receipt_is_not_independent_verification(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    _node_project(tmp_path)
+    changed = str(tmp_path / "src" / "app.ts")
+    mark_workspace_edited(session_id="owner", cwd=tmp_path, paths=[changed])
+    # A worker can run or claim a passing test command; it is not the independent verifier.
+    record_terminal_result(command="pnpm test", cwd=tmp_path, session_id="owner", exit_code=0, output="green")
+    assert verification_unresolved(session_id="owner", changed_paths=[changed])
+
+
+@pytest.mark.parametrize("case", ["missing", "stale", "foreign", "failed"])
+def test_verifier_evidence_must_be_current_and_session_bound(tmp_path, monkeypatch, case):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    _node_project(tmp_path)
+    changed = str(tmp_path / "src" / "app.ts")
+    mark_workspace_edited(session_id="owner", cwd=tmp_path, paths=[changed])
+    if case == "stale":
+        record_verify_run(root=tmp_path, session_id="owner", ok=True)
+        mark_workspace_edited(session_id="owner", cwd=tmp_path, paths=[changed])
+    elif case == "foreign":
+        record_verify_run(root=tmp_path, session_id="other", ok=True)
+    elif case == "failed":
+        record_verify_run(root=tmp_path, session_id="owner", ok=False)
+    assert verification_unresolved(session_id="owner", changed_paths=[changed])
+
+
+def test_current_full_verifier_evidence_allows_completion_after_edit(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    _node_project(tmp_path)
+    changed = str(tmp_path / "src" / "app.ts")
+    mark_workspace_edited(session_id="owner", cwd=tmp_path, paths=[changed])
+    record_verify_run(root=tmp_path, session_id="owner", ok=True, scope="full")
+    assert not verification_unresolved(session_id="owner", changed_paths=[changed])
+
+
+def test_cross_session_full_verify_does_not_clear_editers_pending_work(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    _node_project(tmp_path)
+    changed = str(tmp_path / "src" / "app.ts")
+    mark_workspace_edited(session_id="editor", cwd=tmp_path, paths=[changed])
+    record_verify_run(root=tmp_path, session_id="other", ok=True, scope="full")
+    assert verification_unresolved(session_id="editor", changed_paths=[changed])
+
+
+def test_docs_only_paths_are_not_unresolved_when_evidence_lookup_fails(monkeypatch):
+    from agent.verification_stop import has_verifiable_paths
+
+    assert not has_verifiable_paths(["README.md", "docs/guide.md"])
+    assert has_verifiable_paths(["README.md", "src/app.py"])
 
 # ---------------------------------------------------------------------------
 # Fix C: documentation/prose edits carry no verifiable behavior and must never

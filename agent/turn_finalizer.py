@@ -583,6 +583,53 @@ def finalize_turn(
     if _exit_failure is not None and _exit_failure.fails_turn:
         failed = True
 
+    # verify_on_stop stays opt-in for compatibility. When enabled, however, exhausted
+    # retries or missing/untrusted evidence are a failed outcome, never a successful stop.
+    verification_unresolved = False
+    pending_lock = getattr(agent, "_pending_delegated_verification_lock", None)
+    if pending_lock is None:
+        import threading
+        pending_lock = threading.RLock()
+        agent._pending_delegated_verification_lock = pending_lock
+    try:
+        from agent.verification_stop import verification_unresolved as _verification_unresolved
+        from agent.verification_stop import verify_on_stop_enabled
+
+        if verify_on_stop_enabled():
+            with pending_lock:
+                pending_paths = set(getattr(agent, "_pending_delegated_verification_paths", set()))
+                pending_unobservable = bool(getattr(agent, "_pending_unobservable_delegated_work", False))
+                current_paths = set(getattr(agent, "_turn_file_mutation_paths", set()))
+                unobservable = bool(getattr(agent, "_turn_unobservable_delegated_work", False))
+            all_paths = current_paths | pending_paths
+            verification_unresolved = _verification_unresolved(
+                session_id=getattr(agent, "session_id", None), changed_paths=all_paths,
+            ) or unobservable or pending_unobservable
+            if not verification_unresolved:
+                # A late child may have arrived while evidence was checked. Clear only
+                # the exact pending snapshot we evaluated; newer receipts remain queued.
+                with pending_lock:
+                    if (getattr(agent, "_pending_delegated_verification_paths", set()) == pending_paths
+                            and bool(getattr(agent, "_pending_unobservable_delegated_work", False)) == pending_unobservable):
+                        agent._pending_delegated_verification_paths.clear()
+                        agent._pending_unobservable_delegated_work = False
+    except Exception:
+        # An unavailable evidence path cannot turn edited code into a success.
+        from agent.verification_stop import has_verifiable_paths
+        verification_unresolved = has_verifiable_paths(getattr(agent, "_turn_file_mutation_paths", set())) or bool(
+            getattr(agent, "_turn_unobservable_delegated_work", False)
+            or getattr(agent, "_pending_unobservable_delegated_work", False)
+            or has_verifiable_paths(getattr(agent, "_pending_delegated_verification_paths", set()))
+        )
+    if verification_unresolved and not interrupted:
+        failed = True
+        _turn_exit_reason = "verification_unresolved"
+        final_response = (
+            "Work is incomplete: independent verification evidence is missing, stale, "
+            "or unavailable. The changes require review and verification before they "
+            "can be reported as successful."
+        )
+
     # Sibling producers (``turn_recovery``, ``codex_runtime``) return ``completed=False`` for an
     # interrupted turn; the gateway stream gate and the API run status rely on that contract.
     completed = (
@@ -692,6 +739,7 @@ def finalize_turn(
         "completed": completed,
         "turn_exit_reason": _turn_exit_reason,
         "failed": failed,
+        **({"verification_unresolved": True} if verification_unresolved else {}),
         "partial": False,  # True only when stopped due to invalid tool calls
         "interrupted": interrupted,
         "response_transformed": _response_transformed,

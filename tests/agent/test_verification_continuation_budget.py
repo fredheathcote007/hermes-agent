@@ -75,9 +75,29 @@ def test_verify_on_stop_preserves_composed_report_at_budget_limit(agent, monkeyp
     ):
         result = agent.run_conversation("edit changed.py")
 
-    _assert_pending_response_survives(agent, result)
+    assert result["final_response"].startswith("Work is incomplete: independent verification")
+    assert result["turn_exit_reason"] == "verification_unresolved"
+    assert result["completed"] is False
+    assert result["failed"] is True
+    assert result["verification_unresolved"] is True
+    assert agent._handle_max_iterations.call_count == 0
     # The assistant response persists (it is real, unflagged content).
     assert not result["messages"][1].get("_verification_stop_synthetic")
+
+
+def test_run_conversation_fails_closed_for_pending_delegated_paths(agent, monkeypatch):
+    agent._pending_delegated_verification_paths = {"changed.py"}
+    agent._pending_unobservable_delegated_work = False
+    agent._interruptible_api_call = lambda _kwargs: _response("The delegated work is done.")
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+
+    with patch("hermes_cli.plugins.invoke_hook", return_value=[]):
+        result = agent.run_conversation("summarize the delegated change")
+
+    assert result["completed"] is False
+    assert result["failed"] is True
+    assert result["verification_unresolved"] is True
+    assert result["final_response"].startswith("Work is incomplete: independent verification")
 
 
 def test_pre_verify_preserves_composed_report_at_budget_limit(agent, monkeypatch):
@@ -193,7 +213,11 @@ def test_verify_on_stop_emits_interim_response_to_ui(agent, monkeypatch):
     returns False, so already_streamed is False — the callback reports
     content the UI has not seen yet.
     """
-    agent._interruptible_api_call = lambda _kwargs: _response("composed report")
+    def model_call(_kwargs):
+        agent._turn_file_mutation_paths = {"changed.py"}
+        return _response("composed report")
+
+    agent._interruptible_api_call = model_call
     agent._handle_max_iterations = MagicMock(return_value="replacement summary")
     monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
 
@@ -215,8 +239,12 @@ def test_verify_on_stop_emits_interim_response_to_ui(agent, monkeypatch):
     assert callback_calls[0]["text"] == "composed report"
     assert callback_calls[0]["already_streamed"] is False
 
-    # The candidate persists as the final response.
-    assert result["final_response"] == "composed report"
+    # Interim delivery succeeds, but the unresolved edit cannot become a
+    # successful final result when the verifier continuation budget is spent.
+    assert result["final_response"].startswith("Work is incomplete: independent verification")
+    assert result["completed"] is False
+    assert result["failed"] is True
+    assert result["verification_unresolved"] is True
 
 
 def test_streamed_interim_then_different_summary_not_marked_previewed(agent, monkeypatch):

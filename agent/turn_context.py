@@ -625,6 +625,16 @@ def _reset_per_turn_agent_state(agent: Any) -> None:
         setattr(agent, name, value)
     agent._turn_failed_file_mutations = {}
     agent._turn_file_mutation_paths = set()
+    agent._turn_unobservable_delegated_work = False
+    # Detached delegated children can finish after this turn. Their owner-scoped
+    # marker survives turn resets and is cleared only by independent verification.
+    if not hasattr(agent, "_pending_delegated_verification_lock"):
+        import threading
+        agent._pending_delegated_verification_lock = threading.RLock()
+    if not hasattr(agent, "_pending_delegated_verification_paths"):
+        agent._pending_delegated_verification_paths = set()
+    if not hasattr(agent, "_pending_unobservable_delegated_work"):
+        agent._pending_unobservable_delegated_work = False
     agent._tool_guardrails.reset_for_turn()
     _reset_consol = getattr(agent._memory_store, "reset_consolidation_failures", None)
     if callable(_reset_consol):
