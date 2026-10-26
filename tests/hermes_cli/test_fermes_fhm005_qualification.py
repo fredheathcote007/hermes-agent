@@ -205,6 +205,7 @@ def _proc_info(pid: int) -> dict[str, int] | None:
         return {
             "state": fields[0],
             "pgrp": int(fields[2]),
+            "session": int(fields[3]),
             "start_ticks": int(fields[19]),
         }
     except (
@@ -217,14 +218,39 @@ def _proc_info(pid: int) -> dict[str, int] | None:
         return None
 
 
-def _group_has_live_process(group_id: int) -> bool:
+def _live_group_members(group_id: int) -> list[dict[str, int]]:
+    members = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdecimal():
             continue
         info = _proc_info(int(entry.name))
         if info and info["pgrp"] == group_id and info["state"] != "Z":
-            return True
-    return False
+            members.append(info)
+    return members
+
+
+def _group_has_live_process(group_id: int) -> bool:
+    return bool(_live_group_members(group_id))
+
+
+def _signal_fixture_group(group_id: int, start_ticks: int, signal_number: int) -> bool:
+    """Only signal a still-live process group belonging to our fixture session.
+
+    A parent can exit before its subprocesses; never skip cleanup merely because
+    Popen.poll() reaped the leader. Conversely, never signal a reused/foreign PGID.
+    """
+    members = _live_group_members(group_id)
+    if not members:
+        return False
+    assert all(
+        info["session"] == group_id and info["start_ticks"] >= start_ticks
+        for info in members
+    ), "refusing to signal an unowned or reused process group"
+    try:
+        os.killpg(group_id, signal_number)
+    except ProcessLookupError:
+        return False  # Group exited between /proc observation and signal.
+    return True
 
 
 def _start_agent(
@@ -255,19 +281,22 @@ def _start_agent(
 def _stop_owned(
     process: subprocess.Popen, start_ticks: int, *, signal_number: int = signal.SIGTERM
 ) -> None:
-    if process.poll() is not None:
-        return
     info = _proc_info(process.pid)
-    if not info or info["start_ticks"] != start_ticks or info["pgrp"] != process.pid:
-        return
-    os.killpg(process.pid, signal_number)
+    if info:
+        assert info["start_ticks"] == start_ticks and info["pgrp"] == process.pid and info["session"] == process.pid, (
+            "refusing to terminate a replaced or foreign fixture process"
+        )
+    _signal_fixture_group(process.pid, start_ticks, signal_number)
     try:
-        process.wait(timeout=10)
+        if process.poll() is None:
+            process.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        info = _proc_info(process.pid)
-        if info and info["start_ticks"] == start_ticks and info["pgrp"] == process.pid:
-            os.killpg(process.pid, signal.SIGKILL)
+        _signal_fixture_group(process.pid, start_ticks, signal.SIGKILL)
         process.wait(timeout=10)
+    # Descendants may outlive the leader and the initial signal; continue to
+    # terminate only the original session-owned group, then require it gone.
+    if _group_has_live_process(process.pid):
+        _signal_fixture_group(process.pid, start_ticks, signal.SIGKILL)
     wait_until(
         lambda: not _group_has_live_process(process.pid),
         timeout=10,
@@ -488,3 +517,41 @@ def test_live_restart_rehydrates_pending_and_does_not_replay_child(tmp_path):
         assert not artifact.exists(), (
             "restart replayed the uncertain delegated side effect"
         )
+
+
+def test_process_group_cleanup_after_exited_owner(monkeypatch):
+    """A reaped fixture leader must not leave a live original-session child."""
+    from types import SimpleNamespace
+
+    fake_pid = 987654321
+    start_ticks = 1200
+    group_members = [{"session": fake_pid, "start_ticks": 1201, "pgrp": fake_pid, "state": "S"}]
+    signalled = []
+
+    def kill_owned(group_id, signal_number):
+        assert group_id == fake_pid
+        signalled.append(signal_number)
+        group_members.clear()
+
+    monkeypatch.setattr(os, "killpg", kill_owned)
+    monkeypatch.setattr(sys.modules[__name__], "_live_group_members", lambda group_id: list(group_members))
+    monkeypatch.setattr(sys.modules[__name__], "_proc_info", lambda pid: None)
+    exited = SimpleNamespace(pid=fake_pid, poll=lambda: 0)
+    _stop_owned(exited, start_ticks, signal_number=signal.SIGKILL)
+    assert signalled == [signal.SIGKILL]
+
+
+def test_process_group_cleanup_refuses_foreign_session(monkeypatch):
+    """Reused or foreign group IDs must never be signalled by test cleanup."""
+    from types import SimpleNamespace
+
+    fake_pid = 987654322
+    signals = []
+    monkeypatch.setattr(os, "killpg", lambda gid, sig: signals.append((gid, sig)))
+    monkeypatch.setattr(sys.modules[__name__], "_live_group_members", lambda group_id: [
+        {"session": fake_pid + 1, "start_ticks": 1201, "pgrp": fake_pid, "state": "S"},
+    ])
+    monkeypatch.setattr(sys.modules[__name__], "_proc_info", lambda pid: None)
+    with pytest.raises(AssertionError, match="unowned or reused"):
+        _stop_owned(SimpleNamespace(pid=fake_pid, poll=lambda: 0), 1200, signal_number=signal.SIGKILL)
+    assert signals == []

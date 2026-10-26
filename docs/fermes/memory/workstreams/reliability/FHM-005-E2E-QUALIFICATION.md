@@ -1,6 +1,6 @@
 # FHM-005 E2E qualification evidence
 
-Status: **3/3 one-shot real-process qualifications PASS on authorised host; gateway/async and trusted verifier remain UNQUALIFIED.**
+Status: **5/5 tests PASS on authorised host (3 real-process cases + 2 process-cleanup safeguards); gateway/async and trusted verifier remain UNQUALIFIED.**
 
 ## Scope
 
@@ -56,6 +56,12 @@ tests/tools/test_delegate_verification_outcome.py.
   unconditionally kills its fixture-owned process group even if readiness or
   SQLite polling fails. Host re-run: `/tmp/fermes-fhm005-e2e-host-cleanup.log`
   (3 passed), with Ruff and Python compilation PASS.
+- **PASS** — follow-up safety review found the leader could exit while a
+  descendant remained. Cleanup now checks `/proc` PGID, original session ID
+  and start ticks before SIGKILL even after the leader has been reaped;
+  refuses to signal foreign/reused groups. Two extra negative/positive
+  fixture-cleanup tests pass. Authorised-host rerun: `5 passed` in
+  `/tmp/fermes-fhm005-e2e-ownedgroup-host.log` (3 runtime + 2 cleanup).
 - **PASS** — initial focused source tests (43), Ruff, Python compilation,
   default skip policy and Git whitespace checks in the Codex sandbox. Host
   expanded regressions and independent review must be recorded separately.
