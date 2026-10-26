@@ -282,3 +282,8 @@ def test_effectful_git_commands_cannot_retire_verification_marker(command):
     result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({"command": command})
     _entry(child, result)
     assert parent._pending_unobservable_delegated_work is True
+
+
+def test_date_command_with_set_flag_is_effect_capable():
+    command = "date -s 2027-01-01"
+    assert terminal_command_is_read_only(command) is False

@@ -26,7 +26,7 @@ def tool_may_have_side_effect(tool_name: str) -> bool:
 
 
 _READ_ONLY_COMMANDS = frozenset({
-    "cat", "date", "dir", "file", "grep", "head", "ls", "printf", "pwd",
+    "cat", "dir", "file", "grep", "head", "ls", "printf", "pwd",
     "readlink", "rg", "stat", "tail", "test", "true", "type", "uname", "which", "whoami",
 })
 # This is deliberately a tiny allowlist: git branch can create/delete refs,
