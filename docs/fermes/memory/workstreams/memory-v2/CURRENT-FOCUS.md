@@ -8,7 +8,7 @@ status: Full ReMe fork Stage 1 implemented, draft PR open; partial qualification
 updated: 2026-10-26 Australia/Perth
 source_reme_fork: https://github.com/fredheathcote007/fermes-reme
 source_reme_branch: fermes/hermes-provider-stage1
-source_reme_commit: dc34a7fbbacf7ef9743bedb0d994d4fc4da6ad71
+source_reme_commit: fa93e09
 reme_draft_pr: https://github.com/fredheathcote007/fermes-reme/pull/1
 hermes_deferred_sqlite_draft_pr: https://github.com/fredheathcote007/hermes-agent/pull/19
 
@@ -79,3 +79,11 @@ work, add deterministic tests of ReMe's real request_id replay receipts and
 same-profile multi-process spool safety/lock strategy; then separately qualify
 memory extraction through a safe local-model endpoint. Keep PR #1 draft and
 issue #7 OPEN P1. Preserve existing Qwen / LM Studio worktrees and draft PRs.
+
+## 2026-10-26 latest FHM-007 reliability checkpoint
+
+- Full ReMe fork draft PR #1 now includes commit `fa93e09`; no main merge or production deployment.
+- Cross-process same-profile single-writer lock is implemented and fails closed on contention. Linux competing process test PASS (`/tmp/fhm007/multiprocess-lock-host.log`). Windows implementation still requires CI qualification.
+- ReMe real `Application.run_job` synthetic request-ID replay PASS. Combined focused provider and ReMe receipts test suite: **65/65 PASS** (`/tmp/fhm007/reliability-final-combined-host.log`).
+- Cursor independent code review found no draft-PR blocker; not approved for production. Remaining: Windows CI, full LLM-backed memory extraction, arbitrary crash mid-agent action, FHM-006 precompress checkpoint, source provenance and memory-poisoning gates.
+- Exact next action: inspect CI for `fa93e09`, remediate proven platform failures, rerun independent checks, then qualify model-backed memory through an authorised local endpoint. Keep Dream disabled and PR draft.
