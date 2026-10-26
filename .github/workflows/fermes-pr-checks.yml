@@ -1,0 +1,65 @@
+# Public fork: secret-free, GitHub-hosted checks only. Never publishes artifacts.
+# The upstream CI/Nix/Docker workflows depend on unavailable Blacksmith runners;
+# their PR triggers are deliberately disabled in this maintenance branch.
+name: Fermes Fork CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fermes-fork-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hermes-python:
+    name: Hermes Python tests and lint
+    if: github.repository == 'fredheathcote007/hermes-agent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout fork PR code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: '0.13.3'
+          enable-cache: true
+      - name: Install locked development/test dependencies
+        run: uv sync --locked --python 3.14 --group dev --group test --no-install-project
+      - name: Ruff source and test lint
+        run: |
+          .venv/bin/ruff check agent/auxiliary_client.py agent/reasoning_params.py \
+            hermes_cli/models_local.py tests/agent/test_auxiliary_retry_route_identity.py \
+            tests/agent/test_dropped_tool_call_recovery.py
+      - name: Hermes Qwen / LM Studio regression tests
+        env:
+          HERMES_HOME: ${{ runner.temp }}/fermes-hermes-test-home
+        run: |
+          .venv/bin/python -m pytest -p no:cacheprovider -q --maxfail=1 \
+            tests/agent/test_auxiliary_retry_route_identity.py \
+            tests/agent/test_auxiliary_lmstudio_reasoning.py \
+            tests/agent/test_lmstudio_reasoning.py \
+            tests/agent/test_auxiliary_client.py \
+            tests/agent/test_auxiliary_provider_supplied_client.py \
+            tests/agent/test_auxiliary_fallback_multihop.py \
+            tests/agent/test_auxiliary_transient_retry.py \
+            tests/agent/test_auxiliary_client_cache_follows_credential.py \
+            tests/agent/test_credential_rotation_route_settings.py \
+            tests/agent/test_dropped_tool_call_recovery.py \
+            tests/agent/test_chat_completion_helpers_tool_calls.py \
+            tests/agent/test_reasoning_replay_routes.py
