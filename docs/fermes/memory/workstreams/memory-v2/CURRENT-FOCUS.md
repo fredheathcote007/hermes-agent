@@ -6,6 +6,8 @@ workstream_id: memory-v2
 status: External source audit completed; isolated ledger prototype tested; runtime design remains proposed
 branch: fermes/memory-v2-fhm007-20261026
 source_baseline_sha: e0bb2a8201d9ae43c04cd8f1e8da044c02c2d181
+draft_pr: https://github.com/fredheathcote007/hermes-agent/pull/19
+prototype_commit: 285fdc74c904aecae2b8b643d4efebc86b1f4d28
 updated: 2026-10-26 Australia/Perth
 
 ## Evidence and outcome
@@ -21,7 +23,7 @@ updated: 2026-10-26 Australia/Perth
 
 ## Exact next action
 
-Triage independent P1 findings by reproducing the failures before changing design. Define the authoritative status/revision and provenance model, write-approval integration policy, and FHM-006 checkpoint handling for owner/ARB review. Add fail-closed regression tests, then build an offline benchmark comparing native, existing built-in/FTS, ReMe embedded and memU local on an identical corpus. Keep current Hermes runtime untouched. A draft PR may hold the isolated prototype and review evidence; do not merge into main or claim memory replacement success before review, retrieval-quality evidence, migration/rollback and owner approval.
+Triage independent P1 findings by reproducing the failures before changing design. Define the authoritative status/revision and provenance model, write-approval integration policy, and FHM-006 checkpoint handling for owner/ARB review. Add fail-closed regression tests, then build an offline benchmark comparing native, existing built-in/FTS, ReMe embedded and memU local on an identical corpus. Keep current Hermes runtime untouched. Draft PR #19 holds the isolated prototype and review evidence; do not merge into main or claim memory replacement success before review, retrieval-quality evidence, migration/rollback and owner approval.
 
 ## Hard gates
 
