@@ -16,4 +16,7 @@ The three original Qwen/LM Studio fixes and coordinated malformed tool-call reco
 - Recovery: upstream PRs #139986/#129445/#135120 selectively adapted as `e1541755`, fork draft PR #18; 140 host tests PASS, Cursor second review no P0, GitHub-hosted CI PASS (run 40290526021). Three previously failing synthetic model-format cases recovered without executing raw markup.
 - Official upstream remains `NousResearch/hermes-agent`; fork remote for pushes; update procedure `docs/fermes/UPSTREAM-SYNC.md`.
 - GitHub issue register through FHM-016 is active: FHM-016 (fork runner repair) CLOSED after hosted CI success; FHM-015 recovery source patch in draft PR #18; FHM-002 live Hermes/Qwen E2E remains OPEN.
+- Independent third-fix review retained P1 follow-ups FHM-013 (named custom-provider credential scope) and FHM-014 (vision auto fallback).
+- 2026-10-26 pre-merge scratch included current compatibility base e0bb2a82 + PR #15 + PR #18: 518 auxiliary/provider tests PASS, 140 tool/reasoning tests PASS, 124 additional executions PASS / 4 SKIP (some overlap); Ruff PASS; independent Cursor source review no P0. Real Hermes E2E remains unverified.
+- Live Dad-PC LM Studio Qwen `qwen96k-nomtp` responded READY on no-tools request and returned native `add_numbers(a=3,b=5)` structured tool_calls. This is direct API smoke, not Hermes E2E. LM Studio server restored to stopped status.
 - No production Hermes install has been changed by the fork work.
