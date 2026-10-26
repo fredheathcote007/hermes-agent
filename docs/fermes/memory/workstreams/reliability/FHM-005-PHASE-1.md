@@ -25,12 +25,14 @@ This branch implements a fail-closed stop policy for explicitly enabled
 from child runtime telemetry, and completion requires fresh, full
 `hermes verify` evidence for the same session and each changed project root.
 Worker terminal receipts and child completion prose are not independent proof.
-If a delegated child used an effect-capable terminal command or `execute_code`
-but landed-file telemetry is absent, the parent marks the outcome unobservable
-and fails closed because command-line edits cannot yet be scoped to paths.
-Simple successful `ls`/`git status`-style inspection commands are allowlisted;
-compound, malformed, redirected, or otherwise unrecognised commands remain
-effect-capable. Failed or missing tool receipts also remain unresolved.
+All `terminal` and `execute_code` calls remain unobservable for phase one,
+including apparently harmless `ls`/`git status` inspections and commands with
+reported landed-file paths. A shell command string or worker trace alone
+cannot prove absence of additional effects because of expansion, executable
+resolution, environment, flags, hooks and external actions. Until an approved
+trusted verifier can prove actual effects independently, these attempts stay
+unresolved; this conservative treatment may cause false-positive incomplete
+outcomes. Failed or missing tool receipts also remain unresolved.
 If evidence is missing, stale, foreign-session, failed, or unavailable after
 the bounded continuation, the turn returns `completed=false`, `failed=true`,
 and `verification_unresolved=true` with an explicit incomplete response.
@@ -56,7 +58,7 @@ work unresolved; it must not invent a successful verdict.
 - DEC-004 approves fail-closed completion for delegated/external work; see `docs/fermes/memory/DECISIONS.md`.
 - Phase one uses the existing opt-in `HERMES_VERIFY_ON_STOP=1` or `agent.verify_on_stop` configuration; it does not silently change production defaults.
 - Parent-owned pending paths and unknown command effects are durable in the profile-local verification ledger and rehydrated after turn reset/restart. Exact session, attempt, task-index and authority binding prevents foreign or late telemetry from creating or reviving a row.
-- Under opt-in verification, missing path attribution, failed/missing receipts, or untrusted/missing evidence still fails closed. A narrow direct-command read-only allowlist reduces false-positive incomplete outcomes for incidental inspection; `execute_code`, compound shell syntax, and unrecognised tools/commands remain conservative. This policy does not establish independent verifier trust.
+- Under opt-in verification, missing path attribution, failed/missing receipts, or untrusted/missing evidence still fails closed. Terminal and `execute_code` commands are conservatively effect-capable even when apparently read-only, preventing string-classifier bypasses at the cost of possible false-positive incomplete outcomes. Other unrecognised tools remain conservative. This policy does not establish independent verifier trust.
 - A `hermes verify` ledger entry must not be treated as adversarially independent merely because it has kind=`verify`: child and parent may share the same local execution rights. A separately authorised parent verifier, scoped artifact hashes/versions, fresh post-child receipt and tamper-resistant provenance remain a material design/qualification gate.
 - The fallback is deliberately conservative: unobservable command effects may leave a turn incomplete until an operator examines effects; there is no automatic replay or silent success. FHM-005 stays OPEN.
 - Focused evidence for this correction is retained in `/tmp/fermes-fhm005-durability-codex.log`; the source-vs-live qualification distinction remains: local source/tests are not hosted CI, live gateway, or trusted-verifier qualification.

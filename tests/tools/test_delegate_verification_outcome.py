@@ -93,15 +93,15 @@ def test_mutating_or_unknown_child_without_landed_paths_stays_pending(tool_name)
 
 
 @pytest.mark.parametrize("command", ["ls -la", "git status --short"])
-def test_successful_incidental_read_only_terminal_does_not_stay_pending(command):
+def test_incidental_terminal_command_without_independent_proof_stays_pending(command):
     parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
     child, result = _child_result(parent, "terminal")
     result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({"command": command})
 
     _entry(child, result)
 
-    assert not getattr(parent, "_pending_unobservable_delegated_work", False)
-    assert not getattr(parent, "_turn_unobservable_delegated_work", False)
+    assert parent._pending_unobservable_delegated_work is True
+    assert parent._turn_unobservable_delegated_work is True
 
 
 @pytest.mark.parametrize("command", ["rm -f generated.py", "command rm -f generated.py"])
@@ -287,3 +287,71 @@ def test_effectful_git_commands_cannot_retire_verification_marker(command):
 def test_date_command_with_set_flag_is_effect_capable():
     command = "date -s 2027-01-01"
     assert terminal_command_is_read_only(command) is False
+
+
+@pytest.mark.parametrize("command", [
+    'printf "%s" "$(rm -f generated.py)"',
+    'printf "%s" "`rm -f generated.py`"',
+    'printf "%s" "$HOME"',
+    './ls',
+    '/tmp/ls',
+    './git status',
+    'git -C /tmp status',
+])
+def test_shell_expansion_or_untrusted_executable_path_cannot_bypass_verification(command):
+    assert terminal_command_is_read_only(command) is False
+    parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "terminal")
+    result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({"command": command})
+    _entry(child, result)
+    assert parent._pending_unobservable_delegated_work is True
+
+
+@pytest.mark.parametrize("command", [
+    "ls -la",
+    "git status --short",
+    'printf "%s" "$(rm -f generated.py)"',
+    "./ls",
+    "rg --pre echo text",
+])
+def test_terminal_completion_does_not_retire_durable_pending(monkeypatch, tmp_path, command):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    session_id, authority, attempt_id = "parent-session", "ui:owner", "attempt-1"
+    assert arm_delegated_verification(
+        session_id=session_id, attempt_id=attempt_id, task_index=0, authority=authority,
+    )
+    parent = Parent(session_id=session_id, _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "terminal")
+    child._delegate_verification_session_id = session_id
+    child._delegate_verification_attempt_id = attempt_id
+    child._delegate_verification_authority = authority
+    result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({"command": command})
+
+    _entry(child, result)
+
+    durable = pending_delegated_verification(session_id=session_id, authority=authority)
+    assert durable["error"] is False
+    assert durable["unknown"] is True
+    assert len(durable["rows"]) == 1
+    assert durable["rows"][0]["unobservable"] == 1
+
+
+def test_successful_pure_read_file_child_retires_durable_marker(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    session_id, authority, attempt_id = "parent-session", "ui:owner", "attempt-1"
+    assert arm_delegated_verification(
+        session_id=session_id, attempt_id=attempt_id, task_index=0, authority=authority,
+    )
+    parent = Parent(session_id=session_id, _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "read_file", "ok")
+    child._delegate_verification_session_id = session_id
+    child._delegate_verification_attempt_id = attempt_id
+    child._delegate_verification_authority = authority
+
+    _entry(child, result)
+
+    durable = pending_delegated_verification(session_id=session_id, authority=authority)
+    assert durable["error"] is False
+    assert durable["rows"] == []
