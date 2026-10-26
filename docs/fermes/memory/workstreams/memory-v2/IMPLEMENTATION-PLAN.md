@@ -1,3 +1,16 @@
+# Stage 1 direction superseded on 2026-10-26
+
+**Current owner decision: DEC-004.** Start with a full fork of ReMe at
+https://github.com/fredheathcote007/fermes-reme using the existing embedded Hermes
+provider. First qualify standalone local ReMe memory with its current file-based
+store and BM25, then fix only reproduced operational/security failures. SQLite
+ledger wiring and additional/revised vector infrastructure are deferred until
+the plugin works and has an evidence-backed gap. The following plan documents
+the pre-decision SQLite prototype and remains historical evidence for PR #19;
+it is **not** the active Stage 1 delivery plan.
+
+---
+
 # FHM-007 — Memory v2 implementation plan
 
 project_id: fermes-hermes

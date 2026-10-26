@@ -24,6 +24,21 @@ Date: 2026-10-26
 Decision: Harvest selected open-source code and patterns for native memory, context and skills. External Hindsight/other services not required. Keep compaction history recoverable and candidate skill changes gated by evidence.
 Evidence: Current chat requirements; FHM-006 to FHM-012.
 
+## DEC-004 — Full ReMe fork first for FHM-007 memory provider
+Scope: FHM-007, FHM-006, FHM-008 and FHM-009 integration
+Status: Owner-approved implementation direction (not production acceptance)
+Date: 2026-10-26
+Decision: Fork the complete Apache-2.0 ReMe repository as fredheathcote007/fermes-reme and first qualify its existing embedded Hermes MemoryProvider plugin against the maintained Hermes v0.22.5 fork. Preserve ReMe's native file-based memory, BM25 and existing capability in Stage 1. Repair specific proven compatibility, queue, concurrency, isolation, prompt-injection, write-approval and crash/recovery deficiencies in the fork. Defer integrating the separate Hermes SQLite ledger and adding/changing vector storage until the working fork-plugin baseline is demonstrated, then reassess on evidence. Do not require Project Coordinator, Hindsight, a remote service, or cloud credentials. Future SkillHone and SkillOpt-Sleep must consume source-bound candidate memories, failures/lessons and evaluation evidence through a stable boundary. Keep existing Hermes memory unchanged until acceptance and deployment approval.
+Evidence: Explicit owner direction; agentscope-ai/ReMe upstream commit 363e497; source audit and independent review in memory-v2 workstream; live fork at https://github.com/fredheathcote007/fermes-reme.
+Supersedes FHM-007-PD-002 as the current Stage 1 implementation path; does not invalidate its recorded architecture research. Current Hermes SQLite prototype PR #19 stays draft/deferred; do not merge into main.
+
+## DEC-005 — GitHub-hosted CI for Fermes fork PRs
+Scope: FHM-007 GitHub Actions
+Status: Owner-approved correction
+Date: 2026-10-26
+Decision: For FHM-007 PR validation, do not schedule Blacksmith runners that remain queued. Disable inherited CI/Docker/Nix pull_request triggers on this isolated workstream and use a dedicated secret-free GitHub-hosted ubuntu-24.04 workflow for bounded tests. This reproduces the previously successful Fermes Fork CI workaround but pins the OS version because ubuntu-latest is migrating to Ubuntu 26.04 in October-November 2026. Preserve upstream release-only workflows. Do not weaken acceptance gates silently; document skipped inherited checks.
+Evidence: PR #19 queued workflows, GitHub runner reference, previous Fermes fork workflow fermes-pr-checks.yml.
+
 ## Proposed decisions — not approved
 
 ### FHM-007-PD-001 — Keep the memory-v2 ledger independent during architecture review
