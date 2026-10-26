@@ -164,10 +164,10 @@ def run_tool_round(
             agent.stream_delta_callback(None)
 
     agent._execute_tool_calls(assistant_message, messages, effective_task_id, api_call_count)
-    # Terminal and code execution can write files without file-tool landed-path
-    # receipts. Under the opt-in verifier, retain a conservative marker for that
-    # command round when no file-tool path was recorded.
-    if not getattr(agent, "_turn_file_mutation_paths", set()) and any(
+    # Terminal and code execution can write files without an exact file-tool
+    # landed-path receipt. A path from another tool does not scope the command,
+    # so retain the unknown-effect marker for every such round.
+    if any(
         tc.function.name in {"terminal", "execute_code"} for tc in assistant_message.tool_calls
     ):
         agent._turn_unobservable_delegated_work = True

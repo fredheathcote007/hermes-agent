@@ -5,6 +5,7 @@ completion, and never upgrades targeted checks into "repo green"."""
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
 import sqlite3
@@ -18,6 +19,7 @@ from typing import Any, Optional
 from hermes_constants import get_hermes_home
 
 
+logger = logging.getLogger(__name__)
 _DB_LOCK = threading.Lock()
 _MAX_OUTPUT_SUMMARY_CHARS = 2000
 _MAX_EVIDENCE_AGE_DAYS = 30
@@ -85,6 +87,25 @@ _SCHEMA_DDL = (
     """
         CREATE INDEX IF NOT EXISTS idx_verification_events_session_root
         ON verification_events(session_id, root, id DESC)
+        """,
+    """
+        CREATE TABLE IF NOT EXISTS delegated_verification_pending (
+            pending_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            attempt_id TEXT NOT NULL,
+            task_index INTEGER NOT NULL,
+            authority TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('running','completed','failed','unknown')),
+            paths_json TEXT NOT NULL DEFAULT '[]',
+            unobservable INTEGER NOT NULL DEFAULT 0 CHECK (unobservable IN (0,1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (session_id, attempt_id, task_index, authority)
+        )
+        """,
+    """
+        CREATE INDEX IF NOT EXISTS idx_delegated_verification_owner
+        ON delegated_verification_pending(session_id, authority, state)
         """,
 )
 
@@ -626,3 +647,163 @@ def verification_status(*, session_id: str | None, cwd: str | Path | None) -> di
 
         evidence = dict(event)
         return {"status": "stale" if stale else evidence["status"], **result, "evidence": evidence}
+
+
+def verification_authority(agent: Any) -> str:
+    """Stable parent authority for delegated verification telemetry.
+
+    A UI session is the transport authority when one exists. CLI and test callers
+    use the durable parent session id. The profile-local ledger supplies the
+    profile boundary; no process id is used, so a restart can rehydrate the same
+    parent without accepting a different session's child telemetry.
+    """
+    session_id = str(getattr(agent, "session_id", None) or "")
+    try:
+        from gateway.session_context import get_session_env
+
+        ui_session_id = str(get_session_env("HERMES_UI_SESSION_ID", "") or "")
+    except Exception:  # health: allow BLE001 -- missing UI context falls back to session authority
+        ui_session_id = ""
+    return f"ui:{ui_session_id}" if ui_session_id else f"session:{session_id or 'default'}"
+
+
+def arm_delegated_verification(
+    *, session_id: str | None, attempt_id: str | None, task_index: int, authority: str,
+) -> bool:
+    """Durably arm one delegated child before it can run.
+
+    ``False`` means the opt-in ledger could not be written; callers must not
+    dispatch the child because losing the marker would permit a false success.
+    The insert is idempotent for the exact binding and never overwrites another
+    attempt, session, task, or authority.
+    """
+    if not _ledger_enabled():
+        return True
+    sid, attempt, auth = str(session_id or ""), str(attempt_id or ""), str(authority or "")
+    if not sid or not attempt or not auth or type(task_index) is not int or task_index < 0:
+        return False
+    now = _utc_now()
+    pending_id = f"{sid}:{attempt}:{task_index}:{auth}"
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO delegated_verification_pending("
+                " pending_id, session_id, attempt_id, task_index, authority, state,"
+                " paths_json, unobservable, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, 'running', '[]', 0, ?, ?)",
+                (pending_id, sid, attempt, task_index, auth, now, now),
+            )
+            conn.commit()
+        return True
+    except Exception:  # health: allow BLE001 -- persistence failure must refuse delegated execution
+        return False
+
+
+def update_delegated_verification(
+    *, session_id: str | None, attempt_id: str | None, task_index: int, authority: str,
+    state: str, paths: Any = (), unobservable: bool = False,
+) -> bool:
+    """Apply exact-owner child telemetry to an existing pending row.
+
+    A completed child with no command use and no landed paths is safe to retire.
+    Every other outcome remains durable, including failed/unknown and
+    unobservable command use. A late or foreign child only gets ``False`` and
+    cannot resurrect a retired row.
+    """
+    if not _ledger_enabled():
+        return True
+    sid, attempt, auth = str(session_id or ""), str(attempt_id or ""), str(authority or "")
+    if state not in {"running", "completed", "failed", "unknown"}:
+        return False
+    if not sid or not attempt or not auth or type(task_index) is not int or task_index < 0:
+        return False
+    incoming = {str(path) for path in (paths or ()) if path}
+    pending_id = f"{sid}:{attempt}:{task_index}:{auth}"
+    now = _utc_now()
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            row = conn.execute(
+                "SELECT paths_json, unobservable FROM delegated_verification_pending "
+                "WHERE pending_id=? AND session_id=? AND attempt_id=? AND task_index=? AND authority=?",
+                (pending_id, sid, attempt, task_index, auth),
+            ).fetchone()
+            if row is None:
+                return False
+            existing = set(_load_changed_paths(row["paths_json"]))
+            merged = sorted(existing | incoming)
+            if state == "completed" and not merged and not unobservable:
+                conn.execute("DELETE FROM delegated_verification_pending WHERE pending_id=?", (pending_id,))
+            else:
+                conn.execute(
+                    "UPDATE delegated_verification_pending SET state=?, paths_json=?, unobservable=?, updated_at=? "
+                    "WHERE pending_id=?",
+                    (state, json.dumps(merged), int(bool(row["unobservable"] or unobservable)), now, pending_id),
+                )
+            conn.commit()
+        return True
+    except Exception:  # health: allow BLE001 -- persistence failure must remain unresolved
+        return False
+
+
+def disarm_delegated_verification(
+    *, session_id: str | None, attempt_id: str | None, task_index: int, authority: str,
+) -> bool:
+    """Remove an arm that never reached child execution after dispatch setup failed."""
+    if not _ledger_enabled():
+        return True
+    sid, attempt, auth = str(session_id or ""), str(attempt_id or ""), str(authority or "")
+    if not sid or not attempt or not auth or type(task_index) is not int or task_index < 0:
+        return False
+    pending_id = f"{sid}:{attempt}:{task_index}:{auth}"
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            conn.execute("DELETE FROM delegated_verification_pending WHERE pending_id=?", (pending_id,))
+            conn.commit()
+        return True
+    except Exception:  # health: allow BLE001 -- cleanup failure must not affect a different binding
+        return False
+
+
+def pending_delegated_verification(*, session_id: str | None, authority: str) -> dict[str, Any]:
+    """Load the exact parent's durable pending state; failures are fail-closed."""
+    if not _ledger_enabled():
+        return {"paths": set(), "unknown": False, "rows": [], "error": False}
+    sid, auth = str(session_id or ""), str(authority or "")
+    if not sid or not auth:
+        return {"paths": set(), "unknown": True, "rows": [], "error": True}
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            rows = conn.execute(
+                "SELECT attempt_id, task_index, authority, state, paths_json, unobservable "
+                "FROM delegated_verification_pending WHERE session_id=?",
+                (sid,),
+            ).fetchall()
+        paths: set[str] = set()
+        unknown = False
+        for row in rows:
+            paths.update(str(path) for path in _load_changed_paths(row["paths_json"]) if path)
+            unknown = (
+                unknown or row["authority"] != auth or bool(row["unobservable"])
+                or row["state"] in {"running", "failed", "unknown"}
+            )
+        return {"paths": paths, "unknown": unknown, "rows": [dict(row) for row in rows], "error": False}
+    except Exception:  # health: allow BLE001 -- unreadable durable state fails closed
+        return {"paths": set(), "unknown": True, "rows": [], "error": True}
+
+
+def clear_verified_delegated_verification(*, session_id: str | None, authority: str) -> bool:
+    """Retire only completed, observable rows after the parent verifier passed."""
+    if not _ledger_enabled():
+        return True
+    sid, auth = str(session_id or ""), str(authority or "")
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            conn.execute(
+                "DELETE FROM delegated_verification_pending WHERE session_id=? AND authority=? "
+                "AND state='completed' AND unobservable=0",
+                (sid, auth),
+            )
+            conn.commit()
+        return True
+    except Exception:  # health: allow BLE001 -- retirement failure must not report success
+        return False

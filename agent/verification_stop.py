@@ -143,7 +143,7 @@ def verification_unresolved(*, session_id: str | None, changed_paths: Iterable[s
             ):
                 return True
         return False
-    except Exception:
+    except Exception:  # health: allow BLE001 -- evidence lookup failure is unresolved
         return True
 
 

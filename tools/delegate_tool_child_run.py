@@ -607,37 +607,11 @@ def _build_result_entry(
         if parent is None:
             parent = parent_ref() if callable(parent_ref) else None
         child_paths = set(getattr(child, "_turn_file_mutation_paths", set()) or ())
-        tool_trace = _build_tool_trace(result.get("messages") or [])
-        command_tools = {"terminal", "execute_code"}
-        used_command_tool = any(str(item.get("tool", "")).lower() in command_tools for item in tool_trace)
-        if parent is not None and (used_command_tool and not child_paths or child_paths):
-            lock = getattr(parent, "_pending_delegated_verification_lock", None)
-            if lock is None:
-                import threading
-                lock = threading.RLock()
-                parent._pending_delegated_verification_lock = lock
-            with lock:
-                pending_paths = getattr(parent, "_pending_delegated_verification_paths", None)
-                if not isinstance(pending_paths, set):
-                    pending_paths = set()
-                    parent._pending_delegated_verification_paths = pending_paths
-                pending_paths.update(str(path) for path in child_paths if path)
-                if used_command_tool and not child_paths:
-                    parent._pending_unobservable_delegated_work = True
-                    parent._turn_unobservable_delegated_work = True
-        if parent is not None and child_paths:
-            parent_paths = getattr(parent, "_turn_file_mutation_paths", None)
-            if isinstance(parent_paths, set):
-                parent_paths.update(str(path) for path in child_paths if path)
-            from agent.verification_evidence import mark_workspace_edited
-            from agent.coding_context import project_facts_for
-            from pathlib import Path
-            sid = str(getattr(parent, "session_id", None) or "default")
-            for path in child_paths:
-                candidate = Path(str(path)).expanduser()
-                cwd = next((str(candidate.parent) for _ in (0,) if project_facts_for(candidate.parent)), None)
-                if cwd:
-                    mark_workspace_edited(session_id=sid, cwd=cwd, paths=[str(candidate)])
+        from tools.delegate_verification import record_child_verification
+
+        record_child_verification(
+            child=child, result=result, task_index=task_index, parent=parent, child_paths=child_paths,
+        )
     except Exception:
         # If the owner still exists, make telemetry failure itself observable as
         # unscoped delegated work so a successful child summary cannot hide it.

@@ -8,6 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent.verification_evidence import (
+    arm_delegated_verification,
+    pending_delegated_verification,
+    update_delegated_verification,
+    verification_authority,
+)
 from tools.delegate_tool_child_run import _SchemaOutcome, _build_result_entry
 
 
@@ -92,3 +98,94 @@ def test_child_result_attribution_releases_owner_after_merging_late_paths():
 
     assert parent._pending_delegated_verification_paths == {"/workspace/src/late.py"}
     assert child._delegate_verification_owner is None
+
+
+def test_pending_marker_rehydrates_after_parent_restart(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    assert arm_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+    )
+
+    restored = pending_delegated_verification(session_id="parent-session", authority="ui:owner")
+
+    assert restored["error"] is False
+    assert restored["unknown"] is True  # crash before verification is unresolved
+    assert restored["paths"] == set()
+
+
+def test_late_telemetry_requires_exact_session_attempt_and_authority(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    assert arm_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+    )
+
+    assert not update_delegated_verification(
+        session_id="foreign-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+        state="completed", paths=["/workspace/foreign.py"],
+    )
+    assert not update_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:other",
+        state="completed", paths=["/workspace/foreign.py"],
+    )
+    assert update_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+        state="completed", paths=["/workspace/owned.py"],
+    )
+
+    restored = pending_delegated_verification(session_id="parent-session", authority="ui:owner")
+    assert restored["paths"] == {"/workspace/owned.py"}
+    assert restored["unknown"] is False
+
+
+def test_rehydration_does_not_hide_same_session_foreign_authority(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    assert arm_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:old-owner",
+    )
+
+    restored = pending_delegated_verification(session_id="parent-session", authority="ui:new-owner")
+
+    assert restored["unknown"] is True
+    assert restored["rows"][0]["authority"] == "ui:old-owner"
+
+
+def test_completed_prose_child_retires_only_its_exact_marker(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    assert arm_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+    )
+    assert update_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+        state="completed",
+    )
+    assert pending_delegated_verification(session_id="parent-session", authority="ui:owner")["rows"] == []
+    # A late result cannot resurrect the row after its owner retired it.
+    assert not update_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+        state="completed", paths=["/workspace/stale.py"],
+    )
+
+
+def test_failed_or_unobservable_child_cannot_retire_pending_marker(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    assert arm_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+    )
+    assert update_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-1", task_index=0, authority="ui:owner",
+        state="failed", paths=["/workspace/partial.py"],
+    )
+
+    pending = pending_delegated_verification(session_id="parent-session", authority="ui:owner")
+    assert pending["unknown"] is True
+    assert pending["paths"] == {"/workspace/partial.py"}
+
+
+def test_verification_authority_is_stable_without_ui_binding(monkeypatch):
+    monkeypatch.delenv("HERMES_UI_SESSION_ID", raising=False)
+    assert verification_authority(SimpleNamespace(session_id="parent-session")) == "session:parent-session"
