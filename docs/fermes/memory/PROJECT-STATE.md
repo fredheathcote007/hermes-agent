@@ -6,7 +6,7 @@ Updated: 2026-10-26 Australia/Perth
 ## Current authoritative state
 
 - **Fork:** https://github.com/fredheathcote007/hermes-agent
-- **Maintained Qwen/LM Studio v0.22.5 compatibility branch:** `fermes/qwen-lmstudio-v0225-20261026`, merged head `25b6ab4c60b5d61626b78310b4bf1a9c7253521f`.
+- **Maintained v0.22.5 compatibility branch:** `fermes/qwen-lmstudio-v0225-20261026`; FHM-004 source merge at `0bb167d18758b7465f44043ff54e0fa4cfe56460` (source tested as PR #20 `aa8dd17d`). This source-only integration follows completed Qwen PRs #15/#18.
 - **Official upstream baseline:** `NousResearch/hermes-agent` `v0.22.5`, commit `bf0203a794a07aac3ff764972ab9087baa4e4f4e`. Follow `docs/fermes/UPSTREAM-SYNC.md` for deliberate upstream updates.
 - **Fork PR #15:** MERGED 2026-10-26, merge `01c6b375970b6fd23aa12fd0b3c90de395d896f8` (alias/LM Studio reasoning, auxiliary retry routes, credential and vision fallback hardening).
 - **Fork PR #18:** MERGED 2026-10-26, merge `25b6ab4c60b5d61626b78310b4bf1a9c7253521f` (bounded malformed Qwen tool-call recovery, no raw-text execution).
@@ -27,9 +27,10 @@ Updated: 2026-10-26 Australia/Perth
 - FHM-001, FHM-002, FHM-013, FHM-014, FHM-015: CLOSED completed with evidence after PR merges.
 - FHM-016: CLOSED completed (GitHub-hosted runner CI fix).
 - FHM-003: instruction/launcher procedure rather than a Hermes runtime defect; operating format is in `AGENT-EXECUTION-PROTOCOL.md`; GitHub Issue closure status is the authority.
-- Continuing: FHM-004 bounded stop/recovery, FHM-005 independent verification, FHM-006 compaction, FHM-007 Hermes-owned Local Memory v2, FHM-008 SkillHone, FHM-009 SkillOpt, FHM-010 evaluation, FHM-011 upstream compatibility and FHM-012 code harvesting. Query live Issues before changing state.
+- **FHM-004 completed:** PR #20 merged into compatibility at `0bb167d1` with bounded execution, fail-closed recovery, 89 source/regression PASS plus 20 subtests, two real disposable gateway crash/restart tests PASS, independent Cursor review and hosted CI [40312422340](https://github.com/fredheathcote007/hermes-agent/actions/runs/40312422340) SUCCESS. Source tree postmerge identical to validated PR head `aa8dd17d`. No background timer or service enabled.
+- Continuing: **FHM-005 P0** independent outcome verification, FHM-006 compaction, FHM-007 Hermes-owned Local Memory v2, FHM-008 SkillHone, FHM-009 SkillOpt, FHM-010 evaluation, FHM-011 upstream compatibility and FHM-012 code harvesting. Query live Issues before changing state.
 - FHM-007 is a **separate active workstream**, draft fork PR #19. Do not overwrite, reset, rebase or silently modify its branch/worktree.
 
 ## Next engineering action
 
-Preserve the validated compatibility branch. Qualify the next stable upstream release in an isolated update worktree under FHM-011, test Qwen regression gates before adoption and avoid automatically updating a production installation. Continue FHM-007 independently; no Project Coordinator service dependency is introduced.
+Preserve the validated compatibility branch. Continue **FHM-005 P0**, ensuring no delegated/external task is reported successful without independent acceptance evidence. Qualify the next stable upstream release in an isolated update worktree under FHM-011, test Qwen regression gates before adoption and avoid automatically updating a production installation. Continue FHM-007 independently; no Project Coordinator service dependency is introduced.
