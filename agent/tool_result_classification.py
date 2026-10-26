@@ -29,10 +29,10 @@ _READ_ONLY_COMMANDS = frozenset({
     "cat", "date", "dir", "file", "grep", "head", "ls", "printf", "pwd",
     "readlink", "rg", "stat", "tail", "test", "true", "type", "uname", "which", "whoami",
 })
-_READ_ONLY_GIT_SUBCOMMANDS = frozenset({
-    "branch", "describe", "diff", "diff-tree", "grep", "log", "ls-files", "rev-parse", "show", "status",
-})
-_SHELL_CONTROL_CHARS = frozenset(";&|<>`$()")
+# This is deliberately a tiny allowlist: git branch can create/delete refs,
+# and diff/show/log may invoke external diff drivers or subprocesses.
+_READ_ONLY_GIT_SUBCOMMANDS = frozenset({"describe", "ls-files", "rev-parse", "status"})
+_SHELL_CONTROL_CHARS = frozenset(";&|<>`$()\n\r")
 
 
 def _has_unquoted_shell_control(command: str) -> bool:

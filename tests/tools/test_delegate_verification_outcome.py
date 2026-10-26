@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent.tool_result_classification import terminal_command_is_read_only
 from agent.verification_evidence import (
     arm_delegated_verification,
     pending_delegated_verification,
@@ -254,3 +255,30 @@ def test_failed_or_unobservable_child_cannot_retire_pending_marker(monkeypatch, 
 def test_verification_authority_is_stable_without_ui_binding(monkeypatch):
     monkeypatch.delenv("HERMES_UI_SESSION_ID", raising=False)
     assert verification_authority(SimpleNamespace(session_id="parent-session")) == "session:parent-session"
+
+
+@pytest.mark.parametrize("command", ["ls\nrm -f generated.py", "git status\r\nrm -f generated.py"])
+def test_multiline_shell_command_cannot_bypass_mutation_gate(command):
+    # Bash treats an unquoted newline as a command separator; shlex alone does not.
+    assert terminal_command_is_read_only(command) is False
+    parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "terminal")
+    result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({"command": command})
+    _entry(child, result)
+    assert parent._pending_unobservable_delegated_work is True
+    assert parent._turn_unobservable_delegated_work is True
+
+
+@pytest.mark.parametrize("command", [
+    "git branch side-effect-branch",
+    "git branch -D existing-branch",
+    "git diff --ext-diff",
+    "git show --ext-diff",
+])
+def test_effectful_git_commands_cannot_retire_verification_marker(command):
+    assert terminal_command_is_read_only(command) is False
+    parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "terminal")
+    result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({"command": command})
+    _entry(child, result)
+    assert parent._pending_unobservable_delegated_work is True
