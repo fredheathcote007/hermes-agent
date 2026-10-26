@@ -11,12 +11,12 @@ Apply and qualify the third historical auxiliary retry-route fix after the initi
 - Fork owner `fredheathcote007`, qualified source branch `fermes/qwen-lmstudio-v0225-20261026` at `fee4b6a0`.
 - Third-fix candidate original commit `7dbfcf5a7d` on historical `fix/qwen-reasoning-wire-20261021` worktree.
 - Isolated third-fix development branch `fermes/auxiliary-retry-v0225-20261026`; local worktree `/srv/project-coordinator/projects/fermes-hermes-aux-retry-20261026`. This is a host storage path only; Project Coordinator is NOT a dependency or project focus.
-- Third fix still needs final acceptance/commit/push unless issue #1 evidence explicitly proves otherwise.
-- GitHub Issues are now enabled and issue #1 through #12 exist.
+- Third fix source port committed as `24840479` and pushed; fork draft PR #15 opened targeting compatibility branch. The port branch later merged project-memory documentation. Full live Hermes/Qwen E2E remains unverified.
+- GitHub Issues are enabled; FHM-001 through FHM-014 exist, with FHM-013 and FHM-014 recording residual reviewer P1 concerns.
 - Direct LM Studio model call confirms native tool_calls, but real Hermes integration test outstanding.
 
 ## Immediate next action
-Query issue #1, the third-fix branch, the Codex output `/tmp/fermes-thirdfix-codex.log`, and live test evidence. Complete focused and broader regression verification, independent review, then commit/push isolated third-fix branch; update issue #1. Do not merge into main until acceptance gates pass.
+Query GitHub issue #1 and fork draft PR #15. Confirm CI status and decide whether to close FHM-013/FHM-014 before integrating source changes into the compatibility baseline. Then perform isolated live Hermes -> LM Studio -> Qwen end-to-end acceptance under FHM-002. Do not merge into main or deploy without relevant gates.
 
 ## Stop/decision gate
 No false success claims; no production deployment; preserve other worktrees and baseline. No auto-update on moving upstream main. Do not restart Qwen evaluation without validating endpoint binding and model availability.
