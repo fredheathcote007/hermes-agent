@@ -47,10 +47,15 @@ tests/tools/test_delegate_verification_outcome.py.
   `running` row, completed with a successful tool receipt, and retired its
   exact marker; final SQLite read fails if ledger is absent/unreadable.
 - **PASS** — owner process killed before model released child tool call;
-  fixture waited for the model handler to release and verified the owned
-  process group had exited. Pending state survived restart, the resumed
+  fixture now unconditionally terminates the identity-checked owned
+  process group even on failed preconditions, then waits for model-handler
+  release and checks the group has exited. Pending state survived restart, the resumed
   parent returned incomplete, and the child action was not replayed. The
   model handler event itself is not claimed as child-process completion.
+- **PASS** — after independent Codex review, crash-test teardown now
+  unconditionally kills its fixture-owned process group even if readiness or
+  SQLite polling fails. Host re-run: `/tmp/fermes-fhm005-e2e-host-cleanup.log`
+  (3 passed), with Ruff and Python compilation PASS.
 - **PASS** — initial focused source tests (43), Ruff, Python compilation,
   default skip policy and Git whitespace checks in the Codex sandbox. Host
   expanded regressions and independent review must be recorded separately.

@@ -440,17 +440,22 @@ def test_live_restart_rehydrates_pending_and_does_not_replay_child(tmp_path):
             _stop_owned(process, start_ticks, signal_number=signal.SIGKILL)
             process.wait(timeout=10)
         finally:
-            release_child.set()
-            assert model_response_released.wait(10), (
-                "loopback model handler never released the blocked response"
-            )
-            # The handler event is not a child-process completion signal. Owned
-            # processes must instead be gone before considering no-replay proof.
-            assert not _group_has_live_process(process.pid), (
-                "disposable owner/delegated child process group survived SIGKILL"
-            )
-            log.close()
+            # Kill the identity-checked fixture group even if child readiness or
+            # SQLite polling fails; never release the scripted tool action before
+            # stopping the owner, or a failing test could trigger a late write.
+            try:
+                _stop_owned(process, start_ticks, signal_number=signal.SIGKILL)
+            finally:
+                release_child.set()
+                log.close()
 
+        assert model_response_released.wait(10), (
+            "loopback model handler never released the blocked response"
+        )
+        # A model handler release is not a child-process completion signal.
+        assert not _group_has_live_process(process.pid), (
+            "disposable owner/delegated child process group survived SIGKILL"
+        )
         assert not artifact.exists(), (
             "the killed child unexpectedly completed its side effect"
         )
