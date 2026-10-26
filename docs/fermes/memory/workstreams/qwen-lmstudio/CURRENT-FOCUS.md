@@ -1,30 +1,28 @@
-# Current Focus
+# Current Focus — Qwen / LM Studio
+
 project_id: fermes-hermes
 workstream_id: qwen-lmstudio
-workstream_name: Qwen / LM Studio fork compatibility
+workstream_name: Hermes Qwen/LM Studio compatibility qualification
 Updated: 2026-10-26 Australia/Perth
+State: SOURCE MERGED / LIVE E2E ACCEPTED / PRODUCTION NOT DEPLOYED
 
-## Current objective
-Apply and qualify the third historical auxiliary retry-route fix after the initial two ported LM Studio/Qwen fixes while retaining an upstream-syncable Hermes v0.22.5 fork.
+## Verified outcome
 
-## Where we are now
-- Fork owner `fredheathcote007`, qualified source branch `fermes/qwen-lmstudio-v0225-20261026` at `fee4b6a0`.
-- Third-fix candidate original commit `7dbfcf5a7d` on historical `fix/qwen-reasoning-wire-20261021` worktree.
-- Isolated third-fix development branch `fermes/auxiliary-retry-v0225-20261026`; local worktree `/srv/project-coordinator/projects/fermes-hermes-aux-retry-20261026`. This is a host storage path only; Project Coordinator is NOT a dependency or project focus.
-- Third fix source port is committed and pushed as `24840479`, draft fork PR #15; 518 source-level host tests and GitHub Actions 40289753454 PASS, no merge to main or live E2E.
-- Combined Qwen/GLM tool-call recovery from upstream #139986/#129445/#135120 in draft fork PR #18, change commit `e1541755` on `fermes/toolcall-recovery-v0225-20261026`. 140 host tests PASS, second Cursor independent review no P0, GitHub Actions 40290526021 PASS.
-- GitHub runner issue FHM-016 fixed: hosted runner with pinned Python/uv, Ruff, relevant pytest; no self-hosted runner registered or needed.
-- GitHub Issues are enabled; FHM-001 to FHM-016 exist. FHM-016 closed; FHM-015 open for source PR #18. FHM-013/014 are separate P1 route-security follow-ups; preserve their scope and testing evidence.
-- Direct LM Studio model call confirms native tool_calls, but real Hermes integration test outstanding.
+- Completed and merged fork PR #15 → compatibility branch at `01c6b375`.
+- Completed and merged fork PR #18 → same branch at `25b6ab4c60b5d61626b78310b4bf1a9c7253521f`.
+- Existing alias, failed capability-probe, reasoning-route and retry credential/vision fixes retained. Qwen malformed tool-call recovery is bounded and never directly executes raw assistant text.
+- Independent Cursor reviews no acceptance-blocking findings; 668 combined source tests, 44 stop/verification and 56 session-persistence tests passed.
+- Actual Hermes on Dad-PC WSL, LM Studio localhost-only, Qwen alias `qwen96k-nomtp`: answer-only, actual restricted terminal tool with result and final answer, malformed first response + real Qwen corrective reprompt, and repeated-malformed bounded failure all passed.
+- Merge-tree identity verified: no file differences between validated PR #18 head `b3c1ff75` and merged commit `25b6ab4c`. Both final PR CI runs SUCCESS.
+- Main and active Hermes installations were not changed. No self-hosted runner or permanent LAN exposure is needed for source CI.
 
-- Pre-merge validation on scratch base e0bb2a82 + PRs #15/#18: 518 aux tests PASS, 140 recovery tests PASS, 124 extended PASS / 4 SKIP (some overlap), independent Cursor review no static P0.
-- Direct live Qwen API on Dad-PC passed tool/no-tool, but full Hermes execution remains a required FHM-002 acceptance gate.
+## Canonical evidence
 
-## Immediate next action
-Query live GitHub PR #15 and PR #18 (new heads after pre-merge conflict reconciliation), plus issues FHM-001, FHM-002, FHM-015. Confirm GitHub Actions are green on their NEW commits. Re-check current CI/merge state and the exact branch SHA. Next required step is isolated real Hermes→LM Studio→Qwen tool execution, answer-only finalisation and bounded recovery, without changing active Hermes/production or exposing LM Studio to the LAN. Review current upstream changes and harden any remaining P1 cases before promotion. Do not merge to main merely on source-level tests.
+Read `MERGE-CLOSURE.md`, issues FHM-001, FHM-002, FHM-013, FHM-014, FHM-015 and the merged PRs. Historical local test logs are indexed there.
 
-## Stop/decision gate
-No false success claims; no production deployment; preserve other worktrees and baseline. No auto-update on moving upstream main. Do not restart Qwen evaluation without validating endpoint binding and model availability.
+## Next steps
 
-## Continuity
-The first two fixes, plus the v0.22.5 reasoning adaptation, are already in fork. The third fix is about **auxiliary route identity, API transport and credential scope across retry/fallback**, not another alias lookup patch.
+1. Keep this source baseline pinned and available for rollback.
+2. For upstream adoption, use FHM-011 and inspect new official releases rather than automatically merging moving upstream main.
+3. For full autonomous stop/recovery and verification, work independently in FHM-004/FHM-005; source qualification of these Qwen PRs is not blanket certification of autonomous agents.
+4. Preserve FHM-007 Local Memory v2 worktree and draft PR #19 as independent concurrent work.

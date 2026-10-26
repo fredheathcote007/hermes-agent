@@ -1,21 +1,22 @@
-# Open Loops
+# Fermes Hermes — Open Loops Navigation
+
 project_id: fermes-hermes
+Last updated: 2026-10-26 Australia/Perth
 
-The canonical backlog is GitHub Issues: https://github.com/fredheathcote007/hermes-agent/issues
+**GitHub Issues are authoritative for statuses, priorities, acceptance and assigned work:** https://github.com/fredheathcote007/hermes-agent/issues
 
-| Issue | Priority | State / next action |
+| Issue | Priority | Work remaining |
 |---|---|---|
-| [FHM-001](https://github.com/fredheathcote007/hermes-agent/issues/1) | P0 | Finish third draft auxiliary retry route port, review and regression testing |
-| [FHM-002](https://github.com/fredheathcote007/hermes-agent/issues/2) | P0 | Prove actual Hermes→LM Studio→Qwen E2E and no-tool finalisation |
-| [FHM-003](https://github.com/fredheathcote007/hermes-agent/issues/3) | P0 | Eliminate inherited stdin hangs |
-| [FHM-004](https://github.com/fredheathcote007/hermes-agent/issues/4) | P0 | Prove bounded stop, cleanup and safe restart |
-| [FHM-005](https://github.com/fredheathcote007/hermes-agent/issues/5) | P0 | Independent verification-on-stop |
-| [FHM-006](https://github.com/fredheathcote007/hermes-agent/issues/6) | P1 | Compaction/recovery investigation |
-| [FHM-007](https://github.com/fredheathcote007/hermes-agent/issues/7) | P1 | Local memory v2 design |
-| [FHM-008](https://github.com/fredheathcote007/hermes-agent/issues/8) | P1 | SkillHone learning integration |
-| [FHM-009](https://github.com/fredheathcote007/hermes-agent/issues/9) | P1 | SkillOpt optimisation integration |
-| [FHM-010](https://github.com/fredheathcote007/hermes-agent/issues/10) | P1 | Qualification/evaluation corpus |
-| [FHM-011](https://github.com/fredheathcote007/hermes-agent/issues/11) | P1 | Upstream compatibility maintenance |
-| [FHM-012](https://github.com/fredheathcote007/hermes-agent/issues/12) | P2 | Selective code harvesting review |
+| [FHM-004](https://github.com/fredheathcote007/hermes-agent/issues/4) | P0 | Forced stop boundaries, descendant cleanup and crash-safe recovery |
+| [FHM-005](https://github.com/fredheathcote007/hermes-agent/issues/5) | P0 | Independent verification-on-stop and delegated worker evidence |
+| [FHM-006](https://github.com/fredheathcote007/hermes-agent/issues/6) | P1 | Compaction integrity and source-history recovery |
+| [FHM-007](https://github.com/fredheathcote007/hermes-agent/issues/7) | P1 | Hermes-owned Local Memory v2; separate active PR #19 |
+| [FHM-008](https://github.com/fredheathcote007/hermes-agent/issues/8) | P1 | SkillHone-style experience learning |
+| [FHM-009](https://github.com/fredheathcote007/hermes-agent/issues/9) | P1 | SkillOpt-style validation-gated optimisation |
+| [FHM-010](https://github.com/fredheathcote007/hermes-agent/issues/10) | P1 | Evaluation/golden corpus |
+| [FHM-011](https://github.com/fredheathcote007/hermes-agent/issues/11) | P1 | Review and qualify future official Hermes releases |
+| [FHM-012](https://github.com/fredheathcote007/hermes-agent/issues/12) | P2 | Selective code harvesting and licence/security review |
 
-Do not treat this table as independently authoritative for issue status: query live issues.
+Completed: FHM-001, FHM-002, FHM-013, FHM-014, FHM-015, FHM-016. FHM-003 is a cross-agent execution procedure rather than a product defect; see `AGENT-EXECUTION-PROTOCOL.md` and its live GitHub issue disposition.
+
+No active deployment/production merge is implied by the completed Qwen source PRs.

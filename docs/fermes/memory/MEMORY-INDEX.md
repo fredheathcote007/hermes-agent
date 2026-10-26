@@ -13,7 +13,8 @@ This memory belongs **only** to the maintained fork of `NousResearch/hermes-agen
 - Implementation source: [GitHub fork](https://github.com/fredheathcote007/hermes-agent).
 - **Issue backlog and acceptance state:** [GitHub Issues](https://github.com/fredheathcote007/hermes-agent/issues). Each open item has a permanent FHM-### tracking ID.
 - Workstream state: this folder's `PROJECT-STATE.md`, `OPEN-LOOPS.md`, `WORKSTREAMS.md`, `DECISIONS.md`, `CONSTRAINTS.md`, `EVIDENCE-INDEX.md` and `LESSONS-AND-REJECTED-PATHS.md`.
-- Current qwen/LM Studio workstream: `workstreams/qwen-lmstudio/CURRENT-FOCUS.md`.
+- Completed Qwen/LM Studio source integration: `workstreams/qwen-lmstudio/CURRENT-FOCUS.md` and `workstreams/qwen-lmstudio/MERGE-CLOSURE.md`.
+- Delegated Codex/Cursor/other LLM instruction format and safe process launchers: `AGENT-EXECUTION-PROTOCOL.md`.
 - New-chat entrypoint: `NEW-CHAT-BOOTSTRAP.md`.
 - Evidence, source diffs and test results: source commits and issue/PR comments; do not paste large logs into memory files.
 
