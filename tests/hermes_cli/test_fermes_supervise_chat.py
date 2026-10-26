@@ -214,7 +214,9 @@ class SuperviseChatTests(unittest.IsolatedAsyncioTestCase):
                     "inspect this", deadline=5, executable="/usr/bin/hermes", workspace_parent=parent)
             args, kwargs = await spawn
             workspace = kwargs["cwd"]
-            self.assertEqual(result, 0)
+            # The CLI returned 0, but without an exact admission receipt
+            # SETTLED_UNKNOWN must not signal verified success to automation.
+            self.assertEqual(result, 125)
             self.assertEqual(args, ("/usr/bin/hermes", "chat", "--in", workspace,
                                     "--query-file", "-", "--format", "stream-json"))
             self.assertNotIn("inspect this", args)

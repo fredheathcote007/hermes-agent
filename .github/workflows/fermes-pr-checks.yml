@@ -79,3 +79,16 @@ jobs:
           else
             echo "No Fermes reliability worktree source in this PR; optional suite skipped"
           fi
+      - name: Live disposable gateway interruption and restart tests
+        env:
+          HERMES_FHM004_LIVE: '1'
+          TMPDIR: ${{ runner.temp }}/fermes-live-gateway
+        run: |
+          if [ -f tests/hermes_cli/test_fermes_live_recovery.py ]; then
+            mkdir -p "$TMPDIR"
+            .venv/bin/python -m pytest -p no:cacheprovider -q --maxfail=1 \
+              tests/hermes_cli/test_fermes_live_recovery.py \
+              tests/hermes_cli/test_fermes_gateway_epoch_restart.py
+          else
+            echo "FHM-004 live tests absent; skipped for this branch"
+          fi

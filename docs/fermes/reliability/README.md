@@ -52,6 +52,9 @@ copying the historical interface assumptions:
   pending admission rows, replay cursor, and a subscription ID in `gateway/session_controls.py`.
 - `session.interrupt` takes the exact execution generation and returns the current session handle;
   `session.detach` confirms the exact session/subscription pair.
+- `session.status` is human-readable presentation, not a structured state query. It cannot replace
+  `session.resume` when recovery needs trusted session, epoch, generation, running, pending-admission,
+  or subscription fields.
 - `prompt.receipt` reports the durable admission identity/status, and `session.events.since` is used
   only with the recorded event epoch/cursor. Both use canonical contracts in
   `tui_gateway/contracts/canonical.py`.
@@ -68,17 +71,64 @@ profile's gateway when supervision or explicit recovery is invoked while no owne
 
 ## Qualification status and limitations
 
+An opt-in Linux live integration qualification now lives at
+`tests/hermes_cli/test_fermes_live_recovery.py`. It starts the real local gateway and supervisor in
+disposable `HOME`/`HERMES_HOME` directories, uses a deterministic blockable OpenAI-compatible HTTP
+stub bound to `127.0.0.1`, checks a bounded SIGTERM stop, kills a second supervisor with SIGKILL
+during an active request, proves the orphan scan preview leaves the checkpoint and journal byte
+identical, then permits exactly one read-only recovery attachment. It verifies the same admission,
+profile, instance, authority epoch, session, and generation remain bound and that the model sees each
+submitted marker once. Gateway and process-group termination is guarded by PID, process start time,
+process group, and command identity.
+
+Run it only on an authorized Linux host with the repository's isolated test environment:
+
+```sh
+HERMES_FHM004_LIVE=1 scripts/run_tests.sh tests/hermes_cli/test_fermes_live_recovery.py
+```
+
+The test is skipped unless explicitly enabled. It needs the installed test dependencies available to
+that runner, Linux `/proc`, loopback TCP, and time for two local model turns. It does not contact a
+public provider, install a service, or start a timer. The current worktree has not run this test;
+adding it is not live qualification evidence.
+
 The historical Phase 1/2 source, tests, and evidence under
 `/srv/project-coordinator/projects/hermes-v0225-phase2-20261025` informed this port and remain
 untouched. Those historical VM results do not qualify this fork revision. New copied/ported tests
 are present under `tests/hermes_cli/test_fermes_*.py`; the host supervisor ran them in a clean
 isolated locked Python 3.14 test environment (67 tests and 20 subtests PASS) and
 also ran 22 existing Hermes gateway/delegation regressions (PASS). No live gateway, deliberate process kill, timer, or production
-service was used for this implementation.
+service was used for this implementation; the opt-in live test above remains an unrun acceptance gate.
 
 Before calling FHM-004 accepted, require an independent review and complete the missing
-real-world gateway/supervisor interruption gates. Then perform an owner-authorized disposable live stop/crash qualification that
-demonstrates the exact original admission is stopped or observed once, descendants are gone, and no
-second prompt is submitted. A synthetic fixture is not that proof. Independent verification of
+real-world gateway/supervisor interruption gates. Then run the opt-in test above on the authorized
+host and review its actual result: it must demonstrate the exact original admission is stopped or
+observed once, descendants are gone, and no second prompt is submitted. Independent verification of
 delegated work and stop outcomes belongs to FHM-005 and remains a separate gate; this code does not
 claim delegated side effects are proven by a parent process exit.
+
+
+## Live disposable regression
+
+A real gateway plus local loopback model is exercised by two **opt-in** tests
+without external tools, persistent deployment or production profiles. Use only
+an authorised Linux development host with an isolated test temp directory:
+
+```sh
+HERMES_FHM004_LIVE=1 .venv/bin/python -m pytest -p no:cacheprovider -q \
+  tests/hermes_cli/test_fermes_live_recovery.py \
+  tests/hermes_cli/test_fermes_gateway_epoch_restart.py
+```
+
+The first test covers real bounded interruption, supervisor SIGKILL, immutable
+admission identity, preview-only scanning, one observation, a second skipped
+observation and no duplicate model call/admission. The second kills and restarts
+the disposable gateway and proves the stale epoch/instance remains BLOCKED,
+without replay. Fixture cleanup checks birth ticks and process group ownership
+before stopping only processes it started. Ordinary pytest runs skip these tests
+unless `HERMES_FHM004_LIVE=1` is set.
+
+A fast successful CLI response with an unverified admission now returns 125
+(`SETTLED_UNKNOWN`), not 0; it is not a verified task completion. Even a
+TERMINAL matched gateway receipt is not independent verification of external
+side effects (FHM-005).

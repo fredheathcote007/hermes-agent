@@ -294,7 +294,10 @@ async def supervise_chat(prompt: str, *, deadline: float, settlement_timeout: fl
 
             if fast_completed:
                 await asyncio.gather(stdout_task, stderr_task)
-                return 0
+                # No exact admission receipt was captured. A successful CLI
+                # response does not meet the supervisor's verified-completion
+                # contract; fail closed rather than returning false success.
+                return 125
 
             async def execute():
                 return await process_wait

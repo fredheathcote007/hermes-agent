@@ -76,3 +76,27 @@ Starting SHA: `1db86fb2c66ce6ee0625b159d39b850405fa060c`
 - **NOT YET QUALIFIED:** genuinely interrupted live gateway after supervisor death, gateway-side effects from `session.resume`, independent verification of external tool mutations, cold resume after reboot, and any production timer. The first two require a separately authorised isolated fault-injection environment. FHM-005 remains open.
 
 - 2026-10-26 final host source suite: **67 passed, 20 subtests passed**, Ruff clean. /tmp/fermes-fhm004-final-test.log. Additional negative tests enforce operator BLOCKED checkpoint refusal and lost process-group-leader group-signal refusal. Independent second Cursor review permitted **draft PR only** and explicitly left live gateway crash/reattach effects unresolved.
+
+- 2026-10-26 current worktree follow-up: added `tests/hermes_cli/test_fermes_live_recovery.py`, an
+  explicit `HERMES_FHM004_LIVE=1` Linux integration gate. It starts the local gateway and Hermes
+  supervisor with disposable `HOME`/`HERMES_HOME`, uses only a deterministic loopback model endpoint,
+  verifies bounded SIGTERM settlement, SIGKILL of the supervisor during a blocked active request,
+  preview byte-preservation, one observed recovery claim, stable profile/instance/epoch/session/
+  admission/generation identities, and one model request per prompt. Cleanup checks PID, process
+  start time, process group, and command identity before termination. This test was **not run** in
+  the sandbox; pytest and live process execution were explicitly deferred to the supervising host.
+  Static checks only: Ruff passed, `git diff --check` passed, and Python AST parsing passed. Host next
+  action: `HERMES_FHM004_LIVE=1 scripts/run_tests.sh tests/hermes_cli/test_fermes_live_recovery.py`.
+
+
+## 2026-10-26 — Real disposable gateway qualification
+
+- **Live SIGTERM during in-flight model response:** PASS. Actual Hermes gateway captured session, authority epoch, generation and admission ID; supervisor signal caused a fail-closed BLOCKED/exit-125 result, with one and only one task model request. Evidence: `/tmp/fermes-fhm004-interrupt-live.log`.
+- **Live SIGKILL same-authority recovery:** PASS. Supervisor killed while original admission running, preview made no checkpoint/journal mutation, explicit scanner observation claimed once and returned TERMINAL for the exact admission, second scan skipped, no duplicate model request or durable admission. Evidence: `/tmp/fermes-fhm004-crash-live-isolated.log`.
+- **Live gateway restart with different authority:** PASS. Old supervisor killed mid-turn and original gateway restarted from same disposable state; instance ID/authority epoch changed, scanner observed once and returned BLOCKED, second scan required manual review, only one user-task inference and exactly one original durable admission. Catalogue metadata probes were counted separately. Evidence: `/tmp/fermes-fhm004-restart-live.log`.
+- **Reproducible opt-in pytest gate:** PASS — two real-gateway tests, `HERMES_FHM004_LIVE=1`, 2 passed in 16.11s (`/tmp/fermes-fhm004-live-both-tests.log`). It is not a simulation of the Hermes gateway: real gateway/CLI subprocesses are launched under disposable HERMES_HOME and loopback model. No external tool side effects.
+- **Adjacent/source regression:** PASS — 89 tests and 20 unittest subtests on the FHM-004 branch (`/tmp/fermes-fhm004-final-combined-regressions.log`). The environment received the optional test-only `aiohttp` dependency; no production or shared package change.
+- **False-success negative case:** Before fix, a fast answer-only gateway run returned status 0 with checkpoint `SETTLED_UNKNOWN` and no exact admission receipt (real model-stub evidence `/tmp/fermes-fhm004-live-probe.log`); focused unit RED (`/tmp/fermes-fhm004-false-success-red.log`). Corrected `supervise_chat` so fast unknown returns 125; focused regression GREEN (`/tmp/fermes-fhm004-false-success-green.log`).
+- **Test harness safety:** Existing autouse system guard rejects destructive signals to foreign process groups. Live tests require both explicit opt-in and `live_system_guard_bypass` marker; they verify disposable PID birth ticks, process group and command identity before signals. A controller environment mismatch in an earlier manual probe attached the wrong default profile; the inadvertently launched idle gateway was identified, confirmed to have no admissions and stopped by exact PID/start identity. Corrected scanner calls launch under explicit ephemeral profile. Only the corrected isolated evidence qualifies.
+- **API note:** `session.status` returns formatted human-readable text only in this version; it cannot prove exact generation/admission/authority identity and is not a drop-in substitute for `session.resume`.
+- **FHM-005 boundary:** TERMINAL is gateway admission lifecycle evidence, not independent verification of external tools, delegated work or side effects. The test model has no external tools; FHM-005 remains open P0.
