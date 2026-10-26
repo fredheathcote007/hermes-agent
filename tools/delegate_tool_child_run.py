@@ -565,6 +565,8 @@ def _build_tool_trace(messages: Any) -> list[dict[str, Any]]:
     tool calls with their results by tool_call_id."""
     tool_trace: list[dict[str, Any]] = []
     trace_by_id: dict[str, dict[str, Any]] = {}
+    from agent.tool_result_classification import tool_call_may_have_side_effect
+
     if not isinstance(messages, list):
         return tool_trace
     for msg in messages:
@@ -577,6 +579,7 @@ def _build_tool_trace(messages: Any) -> list[dict[str, Any]]:
                 entry_t = {
                     "tool": fn.get("name", "unknown"), "args_bytes": len(arguments),
                     "input_summary": _summarize_tool_arguments(arguments),
+                    "effect_capable": tool_call_may_have_side_effect(fn.get("name", "unknown"), arguments),
                 }
                 tool_trace.append(entry_t)
                 if tc.get("id"):

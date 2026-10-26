@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from typing import Any
 
 
@@ -22,6 +23,79 @@ NO_EFFECT_TOOL_NAMES = frozenset({
 
 def tool_may_have_side_effect(tool_name: str) -> bool:
     return tool_name not in NO_EFFECT_TOOL_NAMES
+
+
+_READ_ONLY_COMMANDS = frozenset({
+    "cat", "date", "dir", "file", "grep", "head", "ls", "printf", "pwd",
+    "readlink", "rg", "stat", "tail", "test", "true", "type", "uname", "which", "whoami",
+})
+_READ_ONLY_GIT_SUBCOMMANDS = frozenset({
+    "branch", "describe", "diff", "diff-tree", "grep", "log", "ls-files", "rev-parse", "show", "status",
+})
+_SHELL_CONTROL_CHARS = frozenset(";&|<>`$()")
+
+
+def _has_unquoted_shell_control(command: str) -> bool:
+    quote: str | None = None
+    escaped = False
+    for char in command:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        elif char in _SHELL_CONTROL_CHARS:
+            return True
+    return quote is not None or escaped
+
+
+def terminal_command_is_read_only(command: str) -> bool:
+    """Recognize only simple, direct inspection commands as harmless.
+
+    This is intentionally a small allowlist for incidental delegated commands. Shell
+    composition, redirection, command substitution and mutating git subcommands remain
+    effect-capable because a command receipt cannot prove their complete side effects.
+    """
+    if not isinstance(command, str) or not command.strip() or _has_unquoted_shell_control(command):
+        return False
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    executable = tokens[0].rsplit("/", 1)[-1]
+    if executable in _READ_ONLY_COMMANDS:
+        return not any(token in {"-i", "--in-place"} for token in tokens[1:])
+    if executable != "git":
+        return False
+    args = [token for token in tokens[1:] if token not in {"--no-pager", "--literal-pathspecs"}]
+    while args and args[0] in {"-C", "--git-dir", "--work-tree"}:
+        if len(args) < 2:
+            return False
+        args = args[2:]
+    return bool(args and args[0] in _READ_ONLY_GIT_SUBCOMMANDS and "-c" not in args)
+
+
+def tool_call_may_have_side_effect(tool_name: str, arguments: Any) -> bool:
+    """Classify a tool call conservatively for delegated completion provenance."""
+    name = str(tool_name or "")
+    if name == "terminal":
+        try:
+            parsed = json.loads(arguments) if isinstance(arguments, str) else arguments
+        except (TypeError, ValueError):
+            parsed = None
+        return not isinstance(parsed, dict) or not terminal_command_is_read_only(parsed.get("command", ""))
+    if name == "execute_code":
+        return True
+    return tool_may_have_side_effect(name)
 
 
 # Set by a tool that REFUSED a call the harness judged redundant (repeated identical

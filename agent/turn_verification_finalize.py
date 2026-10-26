@@ -54,12 +54,10 @@ def verification_unresolved_at_finalize(agent: Any) -> bool:
     except Exception:  # health: allow BLE001 -- evidence lookup must fail closed
         # health: allow BLE001 -- evidence lookup must fail closed at this boundary
         logger.exception("durable delegated verification finalization failed")
-        return bool(
-            getattr(agent, "_turn_unobservable_delegated_work", False)
-            or getattr(agent, "_pending_unobservable_delegated_work", False)
-            or getattr(agent, "_pending_delegated_verification_paths", set())
-            or getattr(agent, "_pending_durable_verification_error", False)
-        )
+        # Any failure to classify or read verification evidence is unresolved.
+        # Checking only in-memory markers would miss durable-only pending work
+        # following process restart or agent eviction (FHM-005).
+        return True
 
 
 def apply_verification_outcome(
@@ -67,8 +65,11 @@ def apply_verification_outcome(
     exit_reason: Any, final_response: Any,
 ) -> tuple[bool, Any, Any]:
     """Apply the machine-readable incomplete response at the turn boundary."""
-    if verification_unresolved and not interrupted:
+    if verification_unresolved:
+        # Interruption preserves its own exit reason and any already-streamed
+        # text, but unresolved delegated work must still carry a failed verdict.
         failed = True
+    if verification_unresolved and not interrupted:
         exit_reason = "verification_unresolved"
         final_response = (
             "Work is incomplete: independent verification evidence is missing, stale, "

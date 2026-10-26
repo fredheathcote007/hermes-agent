@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import weakref
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from agent.verification_evidence import (
     update_delegated_verification,
     verification_authority,
 )
+from agent.turn_verification_finalize import apply_verification_outcome, verification_unresolved_at_finalize
 from tools.delegate_tool_child_run import _SchemaOutcome, _build_result_entry
 
 
@@ -21,7 +23,7 @@ class Parent(SimpleNamespace):
     """Real AIAgent objects support weakref; SimpleNamespace does not."""
 
 
-def _child_result(parent, tool_name=None):
+def _child_result(parent, tool_name=None, tool_content="ok"):
     child = SimpleNamespace(
         _delegate_parent_ref=weakref.ref(parent),
         _turn_file_mutation_paths=set(),
@@ -31,7 +33,7 @@ def _child_result(parent, tool_name=None):
     if tool_name:
         messages = [
             {"role": "assistant", "tool_calls": [{"id": "call-1", "function": {"name": tool_name, "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "call-1", "content": "ok"},
+            {"role": "tool", "tool_call_id": "call-1", "content": tool_content},
         ]
     return child, {"final_response": "done", "completed": True, "messages": messages}
 
@@ -78,6 +80,51 @@ def test_command_child_without_landed_paths_marks_unknown_side_effects(tool_name
     assert parent._turn_unobservable_delegated_work is True
 
 
+@pytest.mark.parametrize("tool_name", ["write_file", "patch", "plugin_mutation"])
+def test_mutating_or_unknown_child_without_landed_paths_stays_pending(tool_name):
+    parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, tool_name)
+
+    _entry(child, result)
+
+    assert parent._pending_unobservable_delegated_work is True
+    assert parent._turn_unobservable_delegated_work is True
+
+
+@pytest.mark.parametrize("command", ["ls -la", "git status --short"])
+def test_successful_incidental_read_only_terminal_does_not_stay_pending(command):
+    parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "terminal")
+    result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({"command": command})
+
+    _entry(child, result)
+
+    assert not getattr(parent, "_pending_unobservable_delegated_work", False)
+    assert not getattr(parent, "_turn_unobservable_delegated_work", False)
+
+
+@pytest.mark.parametrize("command", ["rm -f generated.py", "command rm -f generated.py"])
+def test_mutating_terminal_command_without_landed_paths_stays_pending(command):
+    parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "terminal")
+    result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({"command": command})
+
+    _entry(child, result)
+
+    assert parent._pending_unobservable_delegated_work is True
+    assert parent._turn_unobservable_delegated_work is True
+
+
+def test_failed_read_only_tool_result_stays_pending():
+    parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "read_file", "Error: unavailable")
+
+    _entry(child, result)
+
+    assert parent._pending_unobservable_delegated_work is True
+    assert parent._turn_unobservable_delegated_work is True
+
+
 def test_prose_only_child_does_not_mark_unknown_side_effects():
     parent = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
     child, result = _child_result(parent)
@@ -112,6 +159,24 @@ def test_pending_marker_rehydrates_after_parent_restart(monkeypatch, tmp_path):
     assert restored["error"] is False
     assert restored["unknown"] is True  # crash before verification is unresolved
     assert restored["paths"] == set()
+
+
+def test_dispatch_only_marker_blocks_parent_finalization_after_rehydration(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    assert arm_delegated_verification(
+        session_id="parent-session", attempt_id="attempt-dispatch-only", task_index=0, authority="session:parent-session",
+    )
+
+    replacement = Parent(session_id="parent-session", _turn_file_mutation_paths=set())
+    assert verification_unresolved_at_finalize(replacement)
+    failed, reason, response = apply_verification_outcome(
+        verification_unresolved=True, interrupted=False, failed=False, exit_reason="completed", final_response="done",
+    )
+
+    assert failed is True
+    assert reason == "verification_unresolved"
+    assert "incomplete" in response
 
 
 def test_late_telemetry_requires_exact_session_attempt_and_authority(monkeypatch, tmp_path):
