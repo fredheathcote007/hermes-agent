@@ -67,6 +67,41 @@ def build_gateway_parser(
     gateway_subparsers = gateway_parser.add_subparsers(
         dest="gateway_command", parser_class=_GatewayCommandParser)
 
+    # The opt-in supervisor uses the canonical gateway RPC client and writes its own
+    # profile-scoped checkpoint. It does not install or start a service.
+    from hermes_cli.fermes_reliability.cli import (
+        cmd_recover as cmd_reliability_recover,
+        cmd_recover_orphans as cmd_reliability_recover_orphans,
+        cmd_supervise as cmd_reliability_supervise,
+    )
+    supervised = gateway_subparsers.add_parser(
+        "supervise", help="Run one bounded chat and checkpoint its exact gateway execution")
+    supervised.add_argument("--deadline", type=float, required=True,
+                            help="maximum chat execution time in seconds")
+    supervised.add_argument("--settlement-timeout", type=float, default=30.0,
+                            help="maximum stop/settlement wait in seconds")
+    supervised.add_argument("--workspace-parent", help="existing private parent for retained workspace")
+    supervised.add_argument("--checkpoint", help="checkpoint path (defaults inside retained workspace)")
+    supervised.add_argument("--hermes", default="hermes", help="Hermes CLI executable")
+    supervised.add_argument("--query-file", required=True,
+                            help="read prompt from file (use - for finite stdin); avoids command-line exposure")
+    supervised.set_defaults(func=cmd_reliability_supervise)
+
+    recover = gateway_subparsers.add_parser(
+        "recover", help="Observe one checkpoint against the same gateway attempt; never replay")
+    recover.add_argument("--checkpoint", required=True)
+    recover.set_defaults(func=cmd_reliability_recover)
+
+    orphans = gateway_subparsers.add_parser(
+        "recover-orphans", help="Preview or explicitly observe abandoned supervised workspaces")
+    orphans.add_argument("--workspace-parent", required=True,
+                         help="absolute, existing, non-symlink scan root")
+    orphans.add_argument("--limit", type=int, default=100, help="maximum direct-child workspaces to inspect")
+    orphans.add_argument("--report", help="optional JSON report path")
+    orphans.add_argument("--observe", action="store_true",
+                         help="claim each verified orphan once and attach read-only; default is preview")
+    orphans.set_defaults(func=cmd_reliability_recover_orphans)
+
     gateway_run = gateway_subparsers.add_parser(
         "run", help="Run gateway in foreground (recommended for WSL and Docker)"
     )

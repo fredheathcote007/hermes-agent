@@ -63,3 +63,35 @@ jobs:
             tests/agent/test_dropped_tool_call_recovery.py \
             tests/agent/test_chat_completion_helpers_tool_calls.py \
             tests/agent/test_reasoning_replay_routes.py
+      - name: Fermes reliability regression and safety checks (when present)
+        run: |
+          if [ -f tests/hermes_cli/test_fermes_bounded_supervisor.py ]; then
+            .venv/bin/ruff check hermes_cli/fermes_reliability \
+              hermes_cli/subcommands/gateway.py tests/hermes_cli/test_fermes_*.py
+            mkdir -p "$RUNNER_TEMP/fermes-reliability-tmp"
+            TMPDIR="$RUNNER_TEMP/fermes-reliability-tmp" .venv/bin/python -m pytest \
+              -p no:cacheprovider -q --maxfail=1 \
+              tests/hermes_cli/test_fermes_bounded_supervisor.py \
+              tests/hermes_cli/test_fermes_supervise_chat.py \
+              tests/hermes_cli/test_fermes_recovery.py \
+              tests/hermes_cli/test_fermes_recover_orphans.py \
+              tests/hermes_cli/test_fermes_process_group_isolation.py
+          else
+            echo "No Fermes reliability worktree source in this PR; optional suite skipped"
+          fi
+      # Use direct pytest intentionally: scripts/run_tests.sh strips the
+      # HERMES_FHM004_LIVE opt-in and TMPDIR via env -i, causing silent skips.
+      # CI is ephemeral and this job has no secrets/deployment privileges.
+      - name: Live disposable gateway interruption and restart tests
+        env:
+          HERMES_FHM004_LIVE: '1'
+          TMPDIR: ${{ runner.temp }}/fermes-live-gateway
+        run: |
+          if [ -f tests/hermes_cli/test_fermes_live_recovery.py ]; then
+            mkdir -p "$TMPDIR"
+            .venv/bin/python -m pytest -p no:cacheprovider -q --maxfail=1 \
+              tests/hermes_cli/test_fermes_live_recovery.py \
+              tests/hermes_cli/test_fermes_gateway_epoch_restart.py
+          else
+            echo "FHM-004 live tests absent; skipped for this branch"
+          fi
