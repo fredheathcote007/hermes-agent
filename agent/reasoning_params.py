@@ -126,7 +126,10 @@ class ReasoningParamsMixin:
             from hermes_cli.models_local import lmstudio_model_reasoning_options
         except Exception:
             return []
-        return _cached_probe(self, "_lm_reasoning_opts_cache", lmstudio_model_reasoning_options, [], bool)
+        # The native probe is tri-state: None is an unreachable/malformed catalog, while [] is
+        # a successful probe without options. Keep the cached unknown distinct for its short TTL,
+        # but expose a list here so capability checks and provider projection fail closed.
+        return _cached_probe(self, "_lm_reasoning_opts_cache", lmstudio_model_reasoning_options, [], bool) or []
 
     def _ollama_supports_thinking_cached(self) -> bool:
         """True only if Ollama's ``/api/show`` declares the ``thinking`` capability."""

@@ -7,8 +7,11 @@ level may resolve to an equal-or-stronger LM Studio level, never a weaker one.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from agent.reasoning_params import ReasoningParamsMixin
 from agent.lmstudio_reasoning import resolve_lmstudio_effort
 from hermes_constants import VALID_REASONING_EFFORTS
 
@@ -65,3 +68,24 @@ def test_clamp_does_not_rewrite_published_allowed_options():
     "xhigh" that the model does not publish is still omitted.
     """
     assert resolve_lmstudio_effort({"enabled": True, "effort": "max"}, ["max"]) is None
+
+
+def test_unknown_probe_is_cached_but_exposed_as_no_options(monkeypatch):
+    """A failed catalog probe must not crash capability checks or enable reasoning wire fields."""
+    calls = []
+    monkeypatch.setattr(
+        "hermes_cli.models_local.lmstudio_model_reasoning_options",
+        lambda *args: calls.append(args) or None,
+    )
+    agent = SimpleNamespace(
+        model="qwen/model",
+        base_url="http://127.0.0.1:1234/v1",
+        api_key="",
+        provider="lmstudio",
+        _base_url_lower="http://127.0.0.1:1234/v1",
+    )
+    agent._lmstudio_reasoning_options_cached = lambda: ReasoningParamsMixin._lmstudio_reasoning_options_cached(agent)
+
+    assert ReasoningParamsMixin._lmstudio_reasoning_options_cached(agent) == []
+    assert ReasoningParamsMixin._supports_reasoning_extra_body(agent) is False
+    assert len(calls) == 1
