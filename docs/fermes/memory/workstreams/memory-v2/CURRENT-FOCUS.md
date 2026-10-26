@@ -171,3 +171,10 @@ Full new-chat pack: `docs/fermes/memory/handoffs/fhm-007-reme-2026-10-26/00-STAR
 - New GitHub CI for `10ed292` started: workflow run IDs 40418821756 (Python tests), 40418822040 (CodeQL), 40418822203 (Fermes Stage 1), 40418821746 (Windows), 40418821757 (Docker), 40418821723 (Python quality), 40418821814 (packages), 40418822011 (documentation). Latest observed: packages and documentation PASS; other workflows running. Requery on resume, no all-green claim yet.
 - **Acceptance still blocked:** legitimate no-tool `auto_memory` can return success/no note and clear a Hermes pending turn that a user explicitly wanted remembered (retention intent versus no-op policy); source-content provenance `source_hash`, same-profile unexpected interruption/partial side-effect recovery, workspace trust, poisoning resistance, FHM-006 v2 pre-compression receipt, and 6-iteration model finalisation need explicit gates. No active Hermes installation or main branch was modified.
 - Next: monitor full CI and remediate actual failures without Blacksmith or force-push. Design and prove a retention-intent contract preserving genuine no-op but preventing silent loss of explicit remember requests; then independent operational/security review. Do not merge/deploy without owner approval.
+
+## 2026-10-27 — Latest qualification
+
+- PR #1 head 76ac298: eight GitHub CI workflows PASS. Still draft and not merged.
+- Isolated tagging schema candidate 3a2be24 in /srv/project-coordinator/projects/fermes-reme-fhm007-tag-schema-20261027. Not on PR #1. Host tests 111 PASS and auto-tag tests 5 PASS; Cursor review no P0/P1 draft blockers.
+- Real Qwen sandbox-7: note written, tag applied, journal empty and fresh-session BM25 recall PASS. Tagger still hit six-iteration ceiling after successful operations.
+- Remaining acceptance: retention-intent versus legitimate no-op; provenance, crash recovery, FHM-006 checkpoint, profile boundaries and model finalisation. No production deployment or main merge.
