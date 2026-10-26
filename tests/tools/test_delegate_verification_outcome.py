@@ -355,3 +355,30 @@ def test_successful_pure_read_file_child_retires_durable_marker(monkeypatch, tmp
     durable = pending_delegated_verification(session_id=session_id, authority=authority)
     assert durable["error"] is False
     assert durable["rows"] == []
+
+
+@pytest.mark.parametrize("expression", [
+    "document.title",
+    "fetch('/api/delete', {method: 'POST'})",
+])
+def test_browser_console_javascript_cannot_retire_durable_marker(monkeypatch, tmp_path, expression):
+    # browser_console(expression=...) executes arbitrary page-context JS; a
+    # successful receipt is not proof of a side-effect-free read.
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    session_id, attempt_id, authority = "parent-session", "attempt-browser", "ui:owner"
+    assert arm_delegated_verification(
+        session_id=session_id, attempt_id=attempt_id, task_index=0, authority=authority,
+    )
+    parent = Parent(session_id=session_id, _turn_file_mutation_paths=set())
+    child, result = _child_result(parent, "browser_console")
+    child._delegate_verification_session_id = session_id
+    child._delegate_verification_attempt_id = attempt_id
+    child._delegate_verification_authority = authority
+    result["messages"][0]["tool_calls"][0]["function"]["arguments"] = json.dumps({
+        "expression": expression, "clear": False,
+    })
+    _entry(child, result)
+    pending = pending_delegated_verification(session_id=session_id, authority=authority)
+    assert pending["unknown"] is True
+    assert pending["rows"] and pending["rows"][0]["unobservable"] == 1
