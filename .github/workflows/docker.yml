@@ -14,7 +14,8 @@ on:
   # event must never rebuild or rewrite the stable Docker channel. This staged
   # path publishes only immutable version tags; the ordered stable publication
   # controller moves stable/latest from the receipt-bound registry digest.
-  pull_request:
+  # Fermes fork: inherited Blacksmith pull_request trigger disabled.
+  # PR verification runs in fermes-fhm007-ci.yml on GitHub-hosted Ubuntu.
   push:
     branches: [main]
   workflow_call:

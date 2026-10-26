@@ -38,7 +38,8 @@ on:
         required: false
         type: boolean
         default: false
-  pull_request:
+  # Fermes fork: inherited Blacksmith pull_request trigger disabled.
+  # PR verification runs in fermes-fhm007-ci.yml on GitHub-hosted Ubuntu.
   push:
     branches: [main]
 
