@@ -87,3 +87,9 @@ issue #7 OPEN P1. Preserve existing Qwen / LM Studio worktrees and draft PRs.
 - ReMe real `Application.run_job` synthetic request-ID replay PASS. Combined focused provider and ReMe receipts test suite: **65/65 PASS** (`/tmp/fhm007/reliability-final-combined-host.log`).
 - Cursor independent code review found no draft-PR blocker; not approved for production. Remaining: Windows CI, full LLM-backed memory extraction, arbitrary crash mid-agent action, FHM-006 precompress checkpoint, source provenance and memory-poisoning gates.
 - Exact next action: inspect CI for `fa93e09`, remediate proven platform failures, rerun independent checks, then qualify model-backed memory through an authorised local endpoint. Keep Dream disabled and PR draft.
+
+## 2026-10-26 final Stage 1 CI checkpoint
+
+- ReMe draft PR #1 latest compatibility commit `a9e9d38` (docstring remediation after pylint failure). All **8/8** GitHub workflows on this commit PASS: Python quality, Python test matrix, Windows CLI smoke, packages, documentation, Docker, CodeQL, focused Fermes Stage 1 CI. Earlier failed runs belong to superseded commits, not unresolved current failures.
+- Offline end-to-end synthetic capture workstream in separate worktree `fermes/fhm007-offline-capture-20261026`, based on `fa93e09`. Preliminary independent host run of the synthetic actual Hermes provider->ReMe AgentScope tool->saved daily note->restart->BM25 recall test PASS (`/tmp/fhm007/host-capture-first.log`). This test monkeypatches model transport; it is not a real LM Studio LLM test. Pending Cursor review and separate branch handback.
+- Remaining production gates unchanged: authorised real model call, mid-write crash consistency, shared workspace protection, FHM-006 checkpoint, injection/provenance, background Dream and skill improvement safety. No active Hermes deployment or main merge.
