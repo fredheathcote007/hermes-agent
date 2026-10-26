@@ -16,8 +16,8 @@ Starting SHA: `1db86fb2c66ce6ee0625b159d39b850405fa060c`
   `session.events.since`. The current contracts include gateway profile/instance/epoch fencing,
   admission and execution-generation identity, and attachment subscriptions. Adapted the polling
   logic to detach every temporary subscription.
-- Live GitHub Issue #4 was unavailable through the browser fetch in this environment. The user
-  supplied issue requirements and remains the acceptance source for this task.
+- GitHub Issue #4 was subsequently accessed and updated directly. It is the canonical
+  P0 acceptance and evidence tracker, with PR #20 linked.
 
 ## Changes made
 
@@ -40,31 +40,30 @@ Starting SHA: `1db86fb2c66ce6ee0625b159d39b850405fa060c`
 | Current RPC source/contract comparison | PASS (source review) | See README API section and current paths above |
 | Historical reference preserved | PASS | Read-only source path only; no writes there |
 | Local reliability unit suite | **PASS: 67 tests, 20 subtests** | Clean isolated locked Python 3.14 env, /tmp/fermes-fhm004-pr-clean-tests.log |
-| Isolated real Linux process-tree cleanup | **PASS: 1 real ignoring-child test + shared-group safety guard** | tests/hermes_cli/test_fermes_process_group_isolation.py (included in 65) |
+| Isolated real Linux process-tree cleanup | **PASS: 1 real ignoring-child test + shared-group safety guard** | tests/hermes_cli/test_fermes_process_group_isolation.py (included in 67) |
 | Existing gateway/delegation regressions | **PASS: 22 tests** | /tmp/fermes-fhm004-native-regressions.log |
 | Ruff source/test lint | **PASS** | Clean locked venv, /tmp/fermes-fhm004-lint-fix3.log; rechecked in test run |
 | CLI parser and empty scanner preview | **PASS** | /tmp/fermes-fhm004-cli-help2.log; /tmp/fermes-fhm004-preview.log |
-| Live gateway stop/crash | NOT RUN | No live runtime or destructive fault injection authorized here |
+| Live gateway stop/crash | **PASS: 2 disposable real-gateway opt-in tests** | /tmp/fermes-fhm004-live-both-tests.log; GitHub Actions 40310182514 SUCCESS |
 | Timer/service deployment | NOT DONE | No timer template, installation, or service change |
-| Independent review | Initial Cursor found P0/P1, **remediated and second review in progress** | /tmp/fermes-fhm004-cursor-review.log; /tmp/fermes-fhm004-cursor-review-v2.log |
+| Independent review | **PASS: no remaining P0/P1 code defects**; stale docs corrected | /tmp/fermes-fhm004-cursor-review-v2.log; /tmp/fermes-fhm004-cursor-live-final.log |
 
-## Remaining acceptance gates
+## Acceptance assessment
 
-1. On the authorized host, prepare the repository's separate test environment and run only:
-   `scripts/run_tests.sh tests/hermes_cli/test_fermes_bounded_supervisor.py`
-   `scripts/run_tests.sh tests/hermes_cli/test_fermes_supervise_chat.py`
-   `scripts/run_tests.sh tests/hermes_cli/test_fermes_recovery.py`
-   `scripts/run_tests.sh tests/hermes_cli/test_fermes_recover_orphans.py`
-   `scripts/run_tests.sh tests/hermes_cli/test_fermes_process_group_isolation.py`
-2. Run the applicable repository lint/check gate and resolve every failure; record the exact SHA,
-   interpreter/tool versions, commands, and results. Do not label this source review as a runtime
-   PASS.
-3. Obtain independent source review, then schedule an owner-authorized disposable live qualification
-   covering timeout/explicit stop, a descendant process, admission receipt reconciliation, reboot or
-   changed-owner identities, and no replay after an unknown outcome. Preserve full provenance and
-   keep production gateway/timer state unchanged.
-4. Close remaining delegated-worker proof requirements under FHM-005 only after that issue's own
-   independent evidence gate is satisfied.
+- **Completed:** bounded SIGTERM of a real in-flight admitted turn, supervisor SIGKILL,
+  one-time manual recovery of the exact admission, preview/no-write scan, gateway
+  restart epoch fencing, no replay/no duplicate durable submission, Linux
+  process-group negative/positive cleanup, and fail-closed fast unverified turn.
+- **Source and CI:** 89 combined source/gateway tests plus 20 unittest subtests;
+  two opt-in real Hermes gateway tests passed locally and in the hosted CI run
+  [40310182514](https://github.com/fredheathcote007/hermes-agent/actions/runs/40310182514).
+  The final documentation-only commit is subject to its own CI check.
+- **Independent reviewer:** Cursor found no outstanding P0/P1 code defect; documentation
+  contradictions identified by the reviewer were subsequently reconciled.
+- **Not in this delivery:** deployment, background timers, non-Linux hosting,
+  crash during an irreversible external tool action, or independent verification
+  of delegated task success. Those are separate acceptance decisions, principally
+  FHM-005. Gateway `TERMINAL` is never evidence of successful external effects.
 
 ## Test interpretation / outstanding gates
 
@@ -73,21 +72,16 @@ Starting SHA: `1db86fb2c66ce6ee0625b159d39b850405fa060c`
 - A negative test confirmed the original unsafe shared-group signal path was present. Source was corrected to check live `getpgid(pid) == pid` and never signal the caller's shared process group. Both shared-group refusal and isolated descendant cleanup tests pass.
 - A recovery case with missing admission ID previously attempted to certify TERMINAL after matching an event; it is now fail-closed BLOCKED, requiring operator inspection instead of implying success.
 - Standalone recovery now uses compare-and-swap even without explicit caller-provided expected values, preventing overwrite of a concurrently updated checkpoint.
-- **NOT YET QUALIFIED:** genuinely interrupted live gateway after supervisor death, gateway-side effects from `session.resume`, independent verification of external tool mutations, cold resume after reboot, and any production timer. The first two require a separately authorised isolated fault-injection environment. FHM-005 remains open.
-
-- 2026-10-26 final host source suite: **67 passed, 20 subtests passed**, Ruff clean. /tmp/fermes-fhm004-final-test.log. Additional negative tests enforce operator BLOCKED checkpoint refusal and lost process-group-leader group-signal refusal. Independent second Cursor review permitted **draft PR only** and explicitly left live gateway crash/reattach effects unresolved.
-
-- 2026-10-26 current worktree follow-up: added `tests/hermes_cli/test_fermes_live_recovery.py`, an
-  explicit `HERMES_FHM004_LIVE=1` Linux integration gate. It starts the local gateway and Hermes
-  supervisor with disposable `HOME`/`HERMES_HOME`, uses only a deterministic loopback model endpoint,
-  verifies bounded SIGTERM settlement, SIGKILL of the supervisor during a blocked active request,
-  preview byte-preservation, one observed recovery claim, stable profile/instance/epoch/session/
-  admission/generation identities, and one model request per prompt. Cleanup checks PID, process
-  start time, process group, and command identity before termination. This test was **not run** in
-  the sandbox; pytest and live process execution were explicitly deferred to the supervising host.
-  Static checks only: Ruff passed, `git diff --check` passed, and Python AST parsing passed. Host next
-  action: `HERMES_FHM004_LIVE=1 scripts/run_tests.sh tests/hermes_cli/test_fermes_live_recovery.py`.
-
+- **Historical interim boundary (superseded by the next section):** the
+  original source port initially lacked a fresh live gateway SIGKILL/restart
+  qualification; it was intentionally kept Draft and FHM-005 remained open.
+  A subsequent host-run, disposable real-gateway test campaign resolved the
+  FHM-004 stop/orphan/restart gates below; it did **not** verify external tool
+  effects, delegation or any production timer.
+- **Original source acceptance:** 67 unit tests and 20 subtests passed; a
+  subsequent combined run with existing gateway/stop/delegation suites passed
+  **89 tests plus 20 subtests**. Source-level reviewer confirmed no P0 after
+  the live test additions and red/green fast-turn failure correction.
 
 ## 2026-10-26 — Real disposable gateway qualification
 

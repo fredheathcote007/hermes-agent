@@ -24,8 +24,8 @@ Isolated source branch `fermes/fhm004-bounded-recovery-20261026` based on Qwen-q
 - No VM/timer/production change. No deployment or merge.
 
 ## Pending
-Fresh disposable live gateway SIGTERM, supervisor SIGKILL, one-time orphan recovery and gateway restart fencing have PASSED. GitHub-hosted CI and final independent review of this new code/evidence remain pending. FHM-005 independent outcome-verification remains separate P0.
-Exact next action: finish reviewer gate, patch any P0/P1, run CI and preserve a draft PR; then plan an authorised disposable gateway interruption test with immutable attempt/admission evidence. Do not close FHM-004 on mock/unit evidence.
+Fresh disposable live gateway SIGTERM, supervisor SIGKILL, one-time orphan recovery and gateway restart fencing PASSED. Independent Cursor review PASS (no P0). GitHub-hosted CI **SUCCESS** at SHA `cf703673`, run `40310182514`, including both real gateway tests. A subsequent documentation-only commit requires its own CI verification. FHM-005 independent outcome-verification remains separate P0.
+Exact next action: verify CI on documentation-cleanup commit; then advance PR #20 for source merge review, retaining FHM-005 as the independent external/delegated outcome-verification issue. No service deployment or fork main promotion is authorised by this source qualification.
 
 
 ## New live evidence (2026-10-26)
