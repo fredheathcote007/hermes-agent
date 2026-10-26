@@ -14,7 +14,8 @@ on:
   # event must never rebuild or rewrite the stable Docker channel. This staged
   # path publishes only immutable version tags; the ordered stable publication
   # controller moves stable/latest from the receipt-bound registry digest.
-  pull_request:
+  # Fork maintenance: PR checks run in fermes-pr-checks.yml on GitHub-hosted runners.
+  # Legacy Blacksmith PR runs intentionally disabled; upstream release logic retained.
   push:
     branches: [main]
   workflow_call:
