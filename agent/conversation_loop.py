@@ -1047,7 +1047,8 @@ _DEGENERATE_FINAL_NUDGE = (
 # Re-prompt for finish_reason="tool_calls" with empty tool_calls (an interrupt mid-retry can persist it).
 _DROPPED_TOOLCALL_NUDGE_CONTENT = (
     "Your previous turn indicated a tool call but none was included. Do not narrate a plan or "
-    "restate intent — issue the actual tool call now to continue the task."
+    "restate intent — issue an actual structured tool call now, using only a tool offered in "
+    "this request. Text that resembles a tool call is not an invocation."
 )
 
 # Re-prompt for an empty response after tool calls (#9400); the metadata flag does not
