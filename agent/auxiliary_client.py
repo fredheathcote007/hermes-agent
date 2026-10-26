@@ -3719,7 +3719,8 @@ def _recoverable_pool_provider(
     # Only the SESSION's own key is shielded, and only when it was sent somewhere other than the
     # session's origin (scheme+host+port — a port or HTTPS→HTTP change is a different trust boundary).
     # An independently owned auxiliary pool keeps rotating at its own origin.
-    if (base and rt_base and normalized == runtime.get("provider")
+    runtime_provider = str(runtime.get("provider") or "").strip().lower()
+    if (base and rt_base and normalized == _normalize_aux_provider(runtime_provider)
             and isinstance(rt_key, str) and rt_key and client_key == rt_key
             and base_url_origin(base) != base_url_origin(rt_base)):
         logger.info("Auxiliary: %s rejected the session key at %s, but the session's endpoint is %s — "
@@ -7493,7 +7494,10 @@ def _resolve_call_client(
             logger.warning("Vision provider %s unavailable, falling back to auto vision backends",
                            resolved_provider)
             effective_provider, client, final_model = resolve_vision_provider_client(
-                provider="auto", model=resolved_model, api_mode=resolved_api_mode, async_mode=async_mode,
+                # The selected provider owns its transport mode. Carrying the failed explicit
+                # provider's api_mode into auto routing can send a main/custom backend the wrong
+                # wire format; route identity and credentials are resolved from that backend.
+                provider="auto", model=resolved_model, async_mode=async_mode,
                 main_runtime=main_runtime)
         if client is not None:
             selected_api_key = lmstudio_probe_api_key(client)
@@ -7575,6 +7579,8 @@ class _PreparedAuxRequest(NamedTuple):
     effective_timeout: float
     effective_extra_body: dict[str, Any]
     base_info: str
+    caller_api_key_provider: str
+    caller_api_key: Optional[str]
 
 
 def _prepare_aux_request(
@@ -7590,6 +7596,7 @@ def _prepare_aux_request(
     back to the resolved base_url when the client exposes none."""
     resolved_provider, resolved_model, resolved_base_url, resolved_api_key, resolved_api_mode = _resolve_task_provider_model(
         task, provider, model, base_url, api_key)
+    caller_key_provider = resolved_provider
     if api_mode:
         resolved_api_mode = api_mode
     effective_extra_body = _get_task_extra_body(task)
@@ -7647,7 +7654,7 @@ def _prepare_aux_request(
     return _PreparedAuxRequest(
         client, final_model, kwargs, resolved_provider, request_provider, resolved_model,
         resolved_base_url, resolved_base_url_explicit, resolved_api_key, resolved_api_mode, effective_timeout,
-        effective_extra_body, base_info)
+        effective_extra_body, base_info, caller_key_provider, api_key)
 
 
 class _LadderStep(NamedTuple):
@@ -8229,6 +8236,7 @@ def _plan_aux_call(
         resolved_base_url_explicit=req.resolved_base_url_explicit,
         resolved_api_key=req.resolved_api_key, resolved_api_mode=req.resolved_api_mode,
         main_runtime=main_runtime, final_model=req.final_model, extra_headers=extra_headers,
+        caller_api_key_provider=req.caller_api_key_provider, caller_api_key=req.caller_api_key,
     )
     return req, retry_kwargs, candidate_kwargs
 
@@ -8246,6 +8254,29 @@ def _should_retry_same_provider(task: Optional[str], exc: Exception, tag: str) -
     return True
 
 
+def _configured_custom_api_key(provider: str, task: Optional[str]) -> Optional[str]:
+    """Return a custom route's config-owned key, excluding credential-pool selections."""
+    if task:
+        task_config = _get_auxiliary_task_config(task)
+        task_provider = str(task_config.get("provider") or "").strip().lower()
+        if task_provider == provider:
+            key = str(task_config.get("api_key") or "").strip()
+            if key:
+                return key
+            key_env = str(task_config.get("key_env") or task_config.get("api_key_env") or "").strip()
+            if key_env and (key := _scoped_key_env(key_env)):
+                return key
+    from hermes_cli.runtime_provider import _get_named_custom_provider
+    entry = _get_named_custom_provider(provider)
+    if not entry:
+        return None
+    key = str(entry.get("api_key") or "").strip()
+    if key:
+        return key
+    key_env = str(entry.get("key_env") or entry.get("api_key_env") or "").strip()
+    return _scoped_key_env(key_env) if key_env else None
+
+
 def _ladder_step_call(
     step: _LadderStep, req: _PreparedAuxRequest, retry_kwargs: dict[str, Any], candidate_kwargs: dict[str, Any],
 ) -> tuple[str, tuple, dict[str, Any]]:
@@ -8255,11 +8286,22 @@ def _ladder_step_call(
     if step.kind == "retry_same_provider":
         retry_provider, retry_model = step.args[:2]
         retry_api_key = step.args[2] if len(step.args) > 2 else retry_kwargs["resolved_api_key"]
-        if (retry_api_key is None and _normalize_aux_provider(retry_provider) == "custom"
-                and retry_kwargs.get("resolved_api_key")):
-            # A call-level custom route has no provider pool or refresh source to replace its
-            # explicitly supplied key. Keep it when the generic auth rung emits None.
-            retry_api_key = retry_kwargs["resolved_api_key"]
+        original_provider = str(retry_kwargs.get("caller_api_key_provider") or "").strip().lower()
+        retry_provider_norm = str(retry_provider or "").strip().lower()
+        original_is_custom = original_provider == "custom" or original_provider.startswith("custom:")
+        retry_is_custom = retry_provider_norm == "custom" or retry_provider_norm.startswith("custom:")
+        caller_key = retry_kwargs.get("caller_api_key")
+        resolved_key = retry_kwargs.get("resolved_api_key")
+        task = retry_kwargs.get("task")
+        configured_key = _configured_custom_api_key(original_provider, task) if original_is_custom else None
+        preserved_custom_key = caller_key or (resolved_key if resolved_key and resolved_key == configured_key else None)
+        if (retry_api_key is None and preserved_custom_key and original_is_custom and retry_is_custom
+                and original_provider == retry_provider_norm):
+            # A custom key belongs to its exact route. Pool rotation passes None to reselect pool
+            # credentials; retain resolved config/call keys only when the retry stays on that route.
+            retry_api_key = preserved_custom_key
+        retry_kwargs = {k: v for k, v in retry_kwargs.items()
+                        if k not in {"caller_api_key_provider", "caller_api_key"}}
         return "retry", (), dict(
             retry_kwargs, resolved_provider=retry_provider,
             resolved_model=retry_model, resolved_api_key=retry_api_key,
