@@ -43,11 +43,14 @@ tests/tools/test_delegate_verification_outcome.py.
   `completed=false`, `failed=true`, `verification_unresolved=true`,
   `turn_exit_reason=verification_unresolved`. The durable row stayed
   `state=failed, unobservable=1` (rather than a misleading completed receipt).
-- **PASS** — a pure `read_file` delegated child completed without a pending
-  durable row; no unnecessary code-suite requirement.
+- **PASS** — a pure `read_file` child had an observable pre-completion
+  `running` row, completed with a successful tool receipt, and retired its
+  exact marker; final SQLite read fails if ledger is absent/unreadable.
 - **PASS** — owner process killed before model released child tool call;
-  pending state survived restart, resuming parent returned incomplete and
-  the child action was not automatically replayed.
+  fixture waited for the model handler to release and verified the owned
+  process group had exited. Pending state survived restart, the resumed
+  parent returned incomplete, and the child action was not replayed. The
+  model handler event itself is not claimed as child-process completion.
 - **PASS** — initial focused source tests (43), Ruff, Python compilation,
   default skip policy and Git whitespace checks in the Codex sandbox. Host
   expanded regressions and independent review must be recorded separately.

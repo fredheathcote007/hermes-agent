@@ -104,7 +104,7 @@ class _QualificationModel:
     artifact: Path
     child_started: threading.Event | None = None
     release_child: threading.Event | None = None
-    child_finished: threading.Event | None = None
+    model_response_released: threading.Event | None = None
     parent_success_attempts: int = 0
     child_tool_calls: int = 0
     decisions: list[str] = field(default_factory=list)
@@ -126,8 +126,8 @@ class _QualificationModel:
                     self.child_started.set()
                 if self.release_child is not None:
                     self.release_child.wait(timeout=30)
-                if self.child_finished is not None:
-                    self.child_finished.set()
+                if self.model_response_released is not None:
+                    self.model_response_released.set()
                 if self.mode == "side_effect":
                     command = (
                         f"printf FHM005_SIDE_EFFECT > {shlex.quote(str(self.artifact))}"
@@ -367,7 +367,9 @@ def test_live_pure_read_child_is_a_clean_completion_control(tmp_path):
     project.mkdir()
     artifact = project / "input.txt"
     artifact.write_text("FHM005_PURE_READ", encoding="utf-8")
-    model = _QualificationModel("pure_read", artifact)
+    child_started = threading.Event()
+    release_child = threading.Event()
+    model = _QualificationModel("pure_read", artifact, child_started, release_child)
     with FakeLLMServer(model) as server:
         _configure_home(home, server.base_url, project, api_key="fhm005-loopback-only")
         process, start_ticks, log = _start_agent(
@@ -377,16 +379,33 @@ def test_live_pure_read_child_is_a_clean_completion_control(tmp_path):
             tmp_path / "read.log",
         )
         try:
+            assert child_started.wait(45), "pure-read child never reached loopback model"
+            armed = wait_until(
+                lambda: _pending_rows(home) or None,
+                timeout=10,
+                what="pure-read delegated marker armed before child completes",
+            )
+            assert len(armed) == 1 and armed[0]["state"] == "running", armed
+            release_child.set()
             result = _result(process, tmp_path / "read-result.json", log)
         finally:
+            release_child.set()
             _stop_owned(process, start_ticks)
             log.close()
 
         assert result["result"]["completed"] is True, result
         assert result["result"].get("verification_unresolved") is not True, result
         assert result["result"].get("failed") is not True, result
+        assert model.child_tool_calls == 1, model.decisions
+        assert "child_dispatch" in model.decisions, model.decisions
+        assert "child_text" in model.decisions, model.decisions
         assert model.parent_success_attempts >= 1, model.decisions
-        assert _pending_rows(home) == []
+        # Unlike _pending_rows (which tolerates missing DB during startup), this
+        # final check must fail on a missing or unreadable verification ledger.
+        ledger = home / "verification_evidence.db"
+        assert ledger.is_file(), "delegated child never persisted its ledger"
+        with sqlite3.connect(f"file:{ledger}?mode=ro", uri=True, timeout=2) as db:
+            assert db.execute("SELECT COUNT(*) FROM delegated_verification_pending").fetchone()[0] == 0
 
 
 def test_live_restart_rehydrates_pending_and_does_not_replay_child(tmp_path):
@@ -398,9 +417,9 @@ def test_live_restart_rehydrates_pending_and_does_not_replay_child(tmp_path):
     artifact = project / "must-not-be-replayed.txt"
     child_started = threading.Event()
     release_child = threading.Event()
-    child_finished = threading.Event()
+    model_response_released = threading.Event()
     model = _QualificationModel(
-        "side_effect", artifact, child_started, release_child, child_finished
+        "side_effect", artifact, child_started, release_child, model_response_released
     )
     with FakeLLMServer(model) as server:
         _configure_home(home, server.base_url, project, api_key="fhm005-loopback-only")
@@ -422,8 +441,13 @@ def test_live_restart_rehydrates_pending_and_does_not_replay_child(tmp_path):
             process.wait(timeout=10)
         finally:
             release_child.set()
-            assert child_finished.wait(10), (
-                "blocked loopback child request did not unwind after owner crash"
+            assert model_response_released.wait(10), (
+                "loopback model handler never released the blocked response"
+            )
+            # The handler event is not a child-process completion signal. Owned
+            # processes must instead be gone before considering no-replay proof.
+            assert not _group_has_live_process(process.pid), (
+                "disposable owner/delegated child process group survived SIGKILL"
             )
             log.close()
 
