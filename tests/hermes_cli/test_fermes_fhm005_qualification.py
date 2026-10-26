@@ -242,10 +242,11 @@ def _signal_fixture_group(group_id: int, start_ticks: int, signal_number: int) -
     members = _live_group_members(group_id)
     if not members:
         return False
-    assert all(
+    if not all(
         info["session"] == group_id and info["start_ticks"] >= start_ticks
         for info in members
-    ), "refusing to signal an unowned or reused process group"
+    ):
+        raise RuntimeError("refusing to signal an unowned or reused process group")
     try:
         os.killpg(group_id, signal_number)
     except ProcessLookupError:
@@ -282,10 +283,12 @@ def _stop_owned(
     process: subprocess.Popen, start_ticks: int, *, signal_number: int = signal.SIGTERM
 ) -> None:
     info = _proc_info(process.pid)
-    if info:
-        assert info["start_ticks"] == start_ticks and info["pgrp"] == process.pid and info["session"] == process.pid, (
-            "refusing to terminate a replaced or foreign fixture process"
-        )
+    if info and not (
+        info["start_ticks"] == start_ticks
+        and info["pgrp"] == process.pid
+        and info["session"] == process.pid
+    ):
+        raise RuntimeError("refusing to terminate a replaced or foreign fixture process")
     _signal_fixture_group(process.pid, start_ticks, signal_number)
     try:
         if process.poll() is None:
@@ -552,6 +555,53 @@ def test_process_group_cleanup_refuses_foreign_session(monkeypatch):
         {"session": fake_pid + 1, "start_ticks": 1201, "pgrp": fake_pid, "state": "S"},
     ])
     monkeypatch.setattr(sys.modules[__name__], "_proc_info", lambda pid: None)
-    with pytest.raises(AssertionError, match="unowned or reused"):
+    with pytest.raises(RuntimeError, match="unowned or reused"):
         _stop_owned(SimpleNamespace(pid=fake_pid, poll=lambda: 0), 1200, signal_number=signal.SIGKILL)
     assert signals == []
+
+
+
+def test_optimized_interpreter_never_signals_foreign_group():
+    """Ownership gates must remain active when Python strips assertions (-O)."""
+    script = """
+from types import SimpleNamespace
+from unittest.mock import patch
+import tests.hermes_cli.test_fermes_fhm005_qualification as module
+
+pid, signals = 987654323, []
+with patch.object(module, '_proc_info', return_value=None), patch.object(
+    module, '_live_group_members', return_value=[
+        {'session': pid+1, 'start_ticks': 1201, 'pgrp': pid, 'state': 'S'}]
+), patch.object(module.os, 'killpg', side_effect=lambda gid, sig: signals.append((gid, sig))):
+    try:
+        module._stop_owned(SimpleNamespace(pid=pid, poll=lambda: 0), 1200)
+    except RuntimeError as err:
+        if 'unowned or reused' not in str(err):
+            raise
+    else:
+        raise SystemExit('foreign process group was not refused')
+    if signals:
+        raise SystemExit('foreign process group was signalled')
+
+with patch.object(module, '_proc_info', return_value={
+    'session': pid+1, 'start_ticks': 1201, 'pgrp': pid, 'state': 'S'
+}), patch.object(module.os, 'killpg', side_effect=lambda gid, sig: signals.append((gid, sig))):
+    try:
+        module._stop_owned(SimpleNamespace(pid=pid, poll=lambda: None), 1200)
+    except RuntimeError as err:
+        if 'replaced or foreign' not in str(err):
+            raise
+    else:
+        raise SystemExit('foreign leader was not refused')
+    if signals:
+        raise SystemExit('foreign leader was signalled')
+print('OPTIMIZED_SAFETY_PASS')
+"""
+    env = _child_env(Path("/dev/null"))  # no real API endpoint or credential use
+    process = subprocess.run(
+        [sys.executable, "-O", "-c", script], cwd=REPO_ROOT, env=env,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15,
+        check=False,
+    )
+    assert process.returncode == 0, process.stdout + process.stderr
+    assert "OPTIMIZED_SAFETY_PASS" in process.stdout

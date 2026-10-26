@@ -1,6 +1,6 @@
 # FHM-005 E2E qualification evidence
 
-Status: **5/5 tests PASS on authorised host (3 real-process cases + 2 process-cleanup safeguards); gateway/async and trusted verifier remain UNQUALIFIED.**
+Status: **6/6 tests PASS on authorised host (3 real-process cases + 3 process-cleanup safeguards); gateway/async and trusted verifier remain UNQUALIFIED.**
 
 ## Scope
 
@@ -62,6 +62,12 @@ tests/tools/test_delegate_verification_outcome.py.
   refuses to signal foreign/reused groups. Two extra negative/positive
   fixture-cleanup tests pass. Authorised-host rerun: `5 passed` in
   `/tmp/fermes-fhm005-e2e-ownedgroup-host.log` (3 runtime + 2 cleanup).
+- **PASS** — independent code review identified that Python `-O` would remove
+  assert-based ownership checks. Changed both killpg authority gates to
+  explicit `RuntimeError`, verified no signal to fake foreign/reused groups
+  in an optimised Python process, and added a permanent `-O` subprocess
+  regression. Authorised-host test log: `6 passed` in
+  `/tmp/fermes-fhm005-e2e-optimized-regression.log` (3 runtime + 3 safety).
 - **PASS** — initial focused source tests (43), Ruff, Python compilation,
   default skip policy and Git whitespace checks in the Codex sandbox. Host
   expanded regressions and independent review must be recorded separately.
