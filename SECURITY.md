@@ -6,10 +6,15 @@ scope for vulnerability reports.
 
 ## 1. Reporting a Vulnerability
 
-Report privately via [GitHub Security Advisories](https://github.com/NousResearch/hermes-agent/security/advisories/new)
-or **security@nousresearch.com**. Do not open public issues for
-security vulnerabilities. **Hermes Agent does not operate a bug
-bounty program.**
+For a vulnerability in this fork, report privately through the
+[fork's GitHub Security Advisories](https://github.com/fredheathcote007/hermes-agent/security/advisories/new).
+Do not open a public issue or pull request for a security
+vulnerability. This fork does not monitor the upstream project's
+security inbox. If the report also affects the original
+[Nous Research Hermes Agent](https://github.com/NousResearch/hermes-agent),
+follow the upstream project's reporting instructions separately after
+using this fork's private channel. **Hermes Agent does not operate a
+bug bounty program.**
 
 A useful report includes:
 
@@ -329,7 +334,8 @@ that:
 
 - **Coordinated disclosure window:** 90 days from report, or until a
   fix is released, whichever comes first.
-- **Channel:** the GHSA thread or email correspondence with
-  security@nousresearch.com.
+- **Channel:** the fork's GHSA thread. Reports affecting only the
+  original upstream project belong in the upstream channel described
+  by its [security policy](https://github.com/NousResearch/hermes-agent/blob/main/SECURITY.md).
 - **Credit:** reporters are credited in release notes unless
   anonymity is requested.

@@ -8,8 +8,10 @@ body:
       value: |
         Thanks for the suggestion! Before submitting, please consider:
 
-        - **Is this a new skill?** Most capabilities should be [skills, not tools](https://github.com/NousResearch/hermes-agent/blob/main/CONTRIBUTING.md#should-it-be-a-skill-or-a-tool). If it's a specialized integration (crypto, NFT, niche SaaS), it belongs on the Skills Hub, not bundled.
-        - **Search [existing issues](https://github.com/NousResearch/hermes-agent/issues)** — someone may have already proposed this.
+        **Privacy check:** If you include diagnostics, redact API keys, tokens, passwords, private logs, memory files, session transcripts, local paths, hostnames, IP addresses, and other network details. Never share `.env`, `auth.json`, `state.db`, or raw logs.
+
+        - **Is this a new skill?** Most capabilities should be [skills, not tools](https://github.com/fredheathcote007/hermes-agent/blob/main/CONTRIBUTING.md#should-it-be-a-skill-or-a-tool). If it's a specialized integration (crypto, NFT, niche SaaS), it belongs on the Skills Hub, not bundled.
+        - **Search [existing issues](https://github.com/fredheathcote007/hermes-agent/issues)** — someone may have already proposed this.
 
   - type: textarea
     id: problem
@@ -79,7 +81,7 @@ body:
       description: |
         If this feature request is related to a problem you're experiencing, run `hermes debug share` and paste the links here.
         In an interactive chat session, you can use `/debug` instead.
-        This helps us understand your environment and any related logs.
+        Review and sanitize any output first; do not share API keys, private logs, memory files, session transcripts, local paths, hostnames, IP addresses, or other network details.
       placeholder: |
         Report   https://paste.rs/abc123
       render: shell

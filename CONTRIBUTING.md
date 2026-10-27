@@ -2,6 +2,8 @@
 
 Thank you for contributing to Hermes Agent! This guide covers everything you need: setting up your dev environment, understanding the architecture, deciding what to build, and getting your PR merged.
 
+This repository is the public [fredheathcote007/hermes-agent](https://github.com/fredheathcote007/hermes-agent) fork of the original [Nous Research Hermes Agent](https://github.com/NousResearch/hermes-agent). The upstream project and its attribution remain unchanged; issues, pull requests, and fork-specific security reports should use this fork's links below.
+
 ---
 
 ## Contribution Priorities
@@ -24,10 +26,10 @@ A quick search before you build saves your time and keeps the PR queue clean —
 
 - **Search both open *and* merged PRs and issues** for your topic or error symptom — the duplicate-check in the PR template fires at review time, after you've already done the work:
   ```bash
-  gh search issues --repo NousResearch/hermes-agent "<your terms>"
-  gh search prs --repo NousResearch/hermes-agent --state all "<your terms>"
+  gh search issues --repo fredheathcote007/hermes-agent "<your terms>"
+  gh search prs --repo fredheathcote007/hermes-agent --state all "<your terms>"
   ```
-  Or use the web UI: [issues](https://github.com/NousResearch/hermes-agent/issues?q=) · [PRs (all states)](https://github.com/NousResearch/hermes-agent/pulls?q=is%3Apr).
+  Or use the web UI: [issues](https://github.com/fredheathcote007/hermes-agent/issues?q=) · [PRs (all states)](https://github.com/fredheathcote007/hermes-agent/pulls?q=is%3Apr).
 - **The issue tracker can lag the code.** Many requested features are already implemented in-tree, so also search the source (`search_files`, or your editor's grep) for the capability before proposing it.
 - **If an open PR already addresses it**, consider reviewing or improving that one instead of opening a competing duplicate.
 - **For larger work**, comment on the issue to signal you're working on it, so others don't start the same thing.
@@ -886,7 +888,7 @@ def test_native_windows_arm64_behavior():
 For several supported hosts, use one marker with multiple arguments, such as
 `@pytest.mark.platforms("linux", "macos")`. Do not stack host markers.
 Tests of pure functions that accept a platform as data need no host marker.
-See [AGENTS.md](AGENTS.md#dont-fake-the-host-os) for the complete contract.
+See [AGENTS.md](AGENTS.md) for the complete contract.
 
 ---
 
@@ -1018,22 +1020,27 @@ test(tools): add unit tests for file_operations
 
 ## Reporting Issues
 
-- Use [GitHub Issues](https://github.com/NousResearch/hermes-agent/issues)
-- Include: OS, Python version, Hermes version (`hermes --version`), full error traceback
+- Use [GitHub Issues](https://github.com/fredheathcote007/hermes-agent/issues)
+- Include: OS, Python version, Hermes version (`hermes --version`), and a redacted error traceback
 - Include steps to reproduce
 - Check existing issues before creating duplicates
-- For security vulnerabilities, please report privately
+- Never post API keys, tokens, passwords, private logs, memory files, session transcripts, local paths, hostnames, IP addresses, or other network details. Never attach `.env`, `auth.json`, `state.db`, or raw logs; inspect and sanitize debug output first.
+- For fork security vulnerabilities, report privately through the [fork's Security Advisories](https://github.com/fredheathcote007/hermes-agent/security/advisories/new), not a public issue or PR. See [SECURITY.md](SECURITY.md) for scope and upstream distinction.
+
+## Community Contribution and Report Hygiene
+
+When sharing a reproduction, screenshot, log, or debug report, provide the smallest sanitized excerpt that proves the problem. Remove API keys and other credentials, private logs, memory files, session transcripts, local filesystem paths, hostnames, IP addresses, and network topology or connection details. Prefer local, redacted diagnostics over public uploads, and use the private advisory channel for suspected vulnerabilities.
 
 ---
 
 ## Community
 
 - **Discord**: [discord.gg/NousResearch](https://discord.gg/NousResearch) — for questions, showcasing projects, and sharing skills
-- **GitHub Discussions**: For design proposals and architecture discussions
+- **Design and architecture discussions**: This fork does not enable GitHub Discussions; use the [Nous Research Discord](https://discord.gg/NousResearch) instead.
 - **Skills Hub**: Upload specialized skills to a registry and share them with the community
 
 ---
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions to this fork will be licensed under the [MIT License](LICENSE). Contributions to the original upstream project should follow its repository's contribution process.
