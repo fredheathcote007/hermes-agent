@@ -1,8 +1,12 @@
 # FHM-005 DR-02 / DR-04 security design candidate
 
-**Status: SECURITY CANDIDATE ONLY.** This document proposes a mechanism for owner and independent
-security review. It is not an approved design, implementation authorization, security guarantee,
-installation plan, or qualification result. No protection described here is implemented or proven.
+**Status: SECURITY MECHANISM CANDIDATE ONLY.** DEC-008 approves the paired protected parent-authority
+and verifier-controller service topology on native Linux and Windows, with interactive Hermes and
+workers lower trust. This document's concrete security mechanisms, operational specifications, and
+validation remain candidates, not approved designs or proven protections. DEC-008 does not authorize
+capability bootstrap/custody, privileged installation or service creation, a particular OS policy or
+IPC, proven protected receipt storage/issuance, trust enablement, deployment, merge, High/Critical
+risk acceptance, or bypass of native gates.
 
 | Field | Value |
 | --- | --- |
@@ -24,10 +28,12 @@ incomplete, never success; uncertain external effects are not automatically repl
 requires native Linux and Windows qualification together. DEC-006 includes compromised workers and
 malicious unprivileged local processes, including same-user/same-logon attackers; local root,
 Administrator, kernel compromise, or equivalent privileged control is outside the initial guarantee.
-DEC-007 approves a protected controller, authenticated legitimate parent, and restricted worker as
-the separation principle. It does not approve this mechanism or authorize services, ACL changes,
-installation, deployment, trusted-mode enablement, or risk acceptance. Manual operator or external
-attestation remains the fallback.
+DEC-007 approves controller/parent/worker separation; DEC-008 approves the paired protected
+parent-authority and verifier-controller service topology on both native Linux and Windows, with
+interactive Hermes processes and workers lower trust. DEC-008 approves topology only: it does not
+approve this mechanism or authorize service creation, ACL changes, installation, deployment,
+trusted-mode enablement, or risk acceptance. Manual operator or external attestation remains the
+fail-closed fallback.
 
 PR #25's ADR/design stack is preserved and extended by this proposal. Merged source-only PRs #40/#42
 supply DTO, attempt, artifact-observation, and candidate SQLite/CAS contracts. They are not an
@@ -48,9 +54,10 @@ through `open_for_live_generation` / `join_existing_live_generation`; these must
 protected service boundary and fail closed. This candidate records those as open proof obligations,
 not implementation findings or completed tests.
 
-The future trusted boundary is a separately installed and protected **controller service** plus a
-narrow **parent authority service** running as a dedicated OS identity. A user-facing Hermes process
-and all project-authored checks are lower trust. The controller accepts authority requests only from
+The approved topology is a distinct protected **controller service** plus a **parent authority
+service** on both native Linux and Windows; interactive Hermes and all delegated workers are lower
+trust. Their concrete identities, provisioning, lifecycle, and protection remain unspecified and
+unapproved. The candidate mechanism has the controller accept authority requests only from
 the parent service identity through OS-authenticated local IPC and a controller-issued per-instance
 capability. If a platform cannot maintain this separation, trusted verification is unavailable and
 Hermes uses manual/external resolution. This proposal deliberately does not claim that a service
@@ -109,8 +116,9 @@ decision below.
 
 ### 4.1 Common protocol identity
 
-Candidate topology: a protected parent authority service is the only controller client. It is
-started/managed by the platform service manager under a dedicated noninteractive identity. The
+Candidate authentication mechanism within the approved topology: a protected parent authority
+service is the only controller client. It is started/managed by the platform service manager under a
+dedicated noninteractive identity. The
 interactive Hermes frontend is a lower-trust client of that service; it cannot contact the controller
 or access the controller's capability. The parent service creates a per-instance capability from
 controller-originated secure randomness over an authenticated bootstrap channel, binds it to the
@@ -129,8 +137,8 @@ controller restart, and parent restart are native adversarial tests. If the host
 service process and its memory from the attacker principal, no capability is considered private.
 
 This is a concrete candidate, not a proven universal implementation. Service-manager provisioning,
-bootstrap API, identity creation, and whether one service or a paired controller/parent service is
-operationally acceptable remain owner decisions.
+bootstrap API, identity creation, capability custody, and lifecycle remain unapproved operational
+specifications. The paired controller/parent service topology itself is approved by DEC-008.
 
 ### 4.2 Linux
 
@@ -428,14 +436,14 @@ Uninstall/repair must preserve or export unresolved status under an owner-approv
 
 ## 9. Material owner approval questions
 
-These answers are required before an implementation proposal can become an approved architecture;
-they are intentionally not inferred from DEC-004–DEC-007.
+DEC-008 answers the paired-service topology question. The remaining answers are required before a
+security mechanism or operational specification can become approved; they are intentionally not
+inferred from DEC-004–DEC-008.
 
-1. **Approve the paired protected-service identity model?** Specifically, may Hermes require a
-   dedicated noninteractive parent authority service and distinct controller service on Linux and
-   Windows, with the interactive UI treated as lower trust? This changes packaging, resource use,
-   user-session integration, credential access, and operations. If no, automatic local trusted mode
-   must remain unavailable for same-user threat protection.
+1. **Specify and validate the concrete DR-02 authentication mechanism.** How will the parent service
+   authenticate to the controller, and how will the parent constrain interactive CLI/TUI/gateway
+   intent to prevent confused-deputy behavior? Service identity authenticates the service, not user
+   intent.
 2. **Approve the service-mediated task-intent boundary?** What authentication/authorization does the
    parent service require from interactive CLI/TUI/gateway callers, and can a same-user caller ask it
    to run arbitrary verification policies? Service identity authenticates the service, not user
@@ -460,9 +468,10 @@ they are intentionally not inferred from DEC-004–DEC-007.
    requires a later separate explicit decision. This prevents a design review from being mistaken
    for release authorization.
 
-Until the owner answers these and DR-03–DR-07 are resolved, this remains a bounded source-only
-proposal. No approval, implementation, deployment, privilege change, network change, or FHM-007 work
-is implied.
+Until the remaining DR-02 questions and DR-03–DR-07 are resolved and validated, this remains a bounded
+source-only candidate for security mechanisms and operational specifications. DEC-008 approves only
+the paired-service topology baseline. No implementation, privileged installation, service creation,
+trust enablement, deployment, merge, risk acceptance, or FHM-007 work is implied.
 
 ## 10. References and verification status
 
