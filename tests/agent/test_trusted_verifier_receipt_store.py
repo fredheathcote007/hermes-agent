@@ -189,6 +189,47 @@ def test_restart_reconciliation_marks_uncertain_work_unknown_without_auto_resume
         assert state == CandidateState.UNKNOWN_INCOMPLETE.value
 
 
+def test_restart_preserves_consumed_terminal_state_and_rejects_replay(tmp_path):
+    db_path = tmp_path / "candidate.db"
+    first = CandidateReceiptStore(db_path)
+    candidate = _issue(first)
+    assert first.consume(candidate, now=NOW + timedelta(seconds=1)).consumed
+    first.close()
+
+    with CandidateReceiptStore(db_path) as restarted:
+        assert restarted.reconcile_required
+        assert restarted.reconcile_after_restart(now=NOW + timedelta(seconds=2)) == 0
+        replay = restarted.consume(candidate, now=NOW + timedelta(seconds=3))
+
+    assert replay.status is CandidateConsumeStatus.INCOMPLETE
+    assert replay.reason == "replay"
+    assert replay.state is CandidateState.CONSUMED
+
+
+def test_same_user_sqlite_rewind_is_fenced_by_restart_reconciliation(tmp_path):
+    """A same-user rewind cannot resume a consumed candidate through normal startup."""
+    db_path = tmp_path / "candidate.db"
+    with CandidateReceiptStore(db_path) as store:
+        candidate = _issue(store)
+        assert store.consume(candidate, now=NOW + timedelta(seconds=1)).consumed
+
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "UPDATE candidate_receipts SET state='issued', consumed_at=NULL WHERE row_id=1",
+    )
+    connection.commit()
+    connection.close()
+
+    with CandidateReceiptStore(db_path) as reopened:
+        assert reopened.reconcile_required
+        assert reopened.reconcile_after_restart(now=NOW + timedelta(seconds=2)) == 1
+        result = reopened.consume(candidate, now=NOW + timedelta(seconds=2))
+
+    assert result.status is CandidateConsumeStatus.INCOMPLETE
+    assert result.reason == "unknown_after_restart_reconciliation"
+    assert result.state is CandidateState.UNKNOWN_INCOMPLETE
+
+
 def test_live_generation_join_rejects_issue_and_consume_from_other_generation(tmp_path):
     db_path = tmp_path / "candidate.db"
     first = CandidateReceiptStore(db_path)
