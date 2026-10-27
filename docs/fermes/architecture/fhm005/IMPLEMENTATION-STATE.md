@@ -8,7 +8,7 @@
 | Issue | FHM-005 / #5 |
 | Worktree | `fermes/fhm005-detailed-design-20261027` |
 | Baseline SHA | `120d7e3241621a72b66a5d09c25cb23d707f5ceb` |
-| Current architecture | Draft candidate; not owner-approved for implementation |
+| Current architecture | DEC-007 approved controller/parent/worker separation principle; detailed IPC/auth and DR-03–DR-07 still unapproved |
 | Current runtime posture | Existing opt-in DEC-004 fail-closed/manual behavior remains the safe baseline |
 | Native qualification | Not qualified for trusted verifier; existing evidence is Linux-only Phase 1 and explicitly excludes the trusted boundary |
 | Default-on | Not authorized |
@@ -48,7 +48,7 @@ this first task.
 
 ## Gates before each expansion
 
-1. Owner resolves the material DR-02–DR-07 choices relevant to the next capability.
+1. DR-02 separation principle approved (DEC-007); owner resolves the remaining authentication design plus DR-03–DR-07 choices relevant to the next capability.
 2. The pure contract and its behavior tests pass with `scripts/run_tests.sh` when code work begins.
 3. Native Linux and Windows implementations are developed and tested separately, then qualified on
    the same candidate SHA.
@@ -66,3 +66,7 @@ test is not architecture approval or native qualification.
 ## Design-review reconciliation (27 October 2026)
 
 Independent Cursor review identified legacy receipt, delegate, request-client, module naming and task-dependency gaps. The candidate task graph now includes FHM005-IMP-015/016/017, aligns IMP-001 to `agent/trusted_verifier_contract.py`, adds protected legacy diagnostics fencing, fixes release-critical priority dependencies and preserves an explicit approval gate before any service or IPC installation. These are proposed tasks, not approved operational changes.
+
+## Approved direction update (27 October 2026)
+
+**DEC-007:** owner approved separate protected controller, authenticated Hermes parent, restricted worker execution. The exact Linux and Windows same-user impersonation-resistant mechanism remains unapproved/unproven; trusted service installation or success reporting must not proceed without it. PR #26 remains a non-authoritative contract-only implementation, not a protected verifier.

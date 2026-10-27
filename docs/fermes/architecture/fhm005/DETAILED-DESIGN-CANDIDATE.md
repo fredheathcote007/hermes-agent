@@ -9,7 +9,7 @@
 | Branch baseline | `fermes/fhm005-detailed-design-20261027` at `120d7e3241621a72b66a5d09c25cb23d707f5ceb` |
 | Scope | Protected local controller, restricted executor, authoritative receipt, and status propagation |
 | Approved constraints | DEC-004 fail closed; DEC-005 native Linux **and** Windows; DEC-006 unprivileged-worker threat model and manual/external fallback |
-| Architecture disposition | Draft candidate; DR-02 through DR-07 remain owner decisions |
+| Architecture disposition | DR-02 separation approved under DEC-007; secure auth mechanism and DR-03–DR-07 remain decisions |
 | Default-on | Explicitly out of scope; trusted mode remains opt-in |
 
 This document turns the ARB candidate into an implementation plan. It does not approve the target,
@@ -426,7 +426,7 @@ These are proposed seams for the implementation manifest, not edits made by this
 * CI workflows/jobs that fail closed when either required native lane is skipped, blocked, or timed out.
 
 The exact production module layout, service packaging, and installer mechanism remain subject to
-DR-02–DR-07 and owner review. See [IMPLEMENTATION-MANIFEST.json](IMPLEMENTATION-MANIFEST.json),
+DR-02 authentication mechanism plus DR-03–DR-07 and owner review. See [IMPLEMENTATION-MANIFEST.json](IMPLEMENTATION-MANIFEST.json),
 [ADR-DR02-DR07-CANDIDATE.md](ADR-DR02-DR07-CANDIDATE.md), and [VALIDATION-PLAN.md](VALIDATION-PLAN.md).
 
 ## Independent-review corrections — integration seams
@@ -439,10 +439,10 @@ DR-02–DR-07 and owner review. See [IMPLEMENTATION-MANIFEST.json](IMPLEMENTATIO
 - Linux native qualification must exercise AppArmor/SELinux availability and failure modes; Windows native qualification must exercise named-pipe client impersonation and Job Object breakaway prevention. Cgroup-only or user-daemon-only patterns are not sufficient proof.
 - A managed service may start on demand rather than remain resident; both options must enforce the same protected identity, state and IPC. This lifecycle choice remains proposed under DR-03.
 
-The only currently authorised implementation scope is pure data/contracts and tests. DR-02 to DR-07 still gate services, IPC, receipt issuance, privileged installation and trusted-mode integration.
+The only currently authorised implementation scope is pure data/contracts and tests. DR-02 secure parent-authentication mechanism and DR-03–DR-07 still gate services, IPC, receipt issuance, privileged installation and trusted-mode integration.
 
 ## Protected parent authority — material DR-02 gate
 
-An OS socket peer UID or Windows user SID alone **cannot distinguish** a legitimate parent from a malicious unrelated process running with the same account. DEC-006 includes unprivileged local processes, so the controller must accept requests only from an independently authenticated parent identity/capability that the worker and other untrusted local processes cannot steal or use. The design may use a distinct supervising principal, non-inheritable protected capability from an OS authority, or an explicitly qualified equivalent, but must show native same-user impersonation tests before declaring this boundary trustworthy. Merely storing a token in worker-accessible user files, environment variables, same-user SQLite, or unprotected process memory does not establish authority. If the requested parent separation cannot be proven on a supported platform, trusted mode is **unavailable**, with manual/external verification fallback; do not weaken DEC-006 silently. The precise capability mechanism is a **material DR-02 decision not yet approved**.
+An OS socket peer UID or Windows user SID alone **cannot distinguish** a legitimate parent from a malicious unrelated process running with the same account. DEC-006 includes unprivileged local processes, so the controller must accept requests only from an independently authenticated parent identity/capability that the worker and other untrusted local processes cannot steal or use. The design may use a distinct supervising principal, non-inheritable protected capability from an OS authority, or an explicitly qualified equivalent, but must show native same-user impersonation tests before declaring this boundary trustworthy. Merely storing a token in worker-accessible user files, environment variables, same-user SQLite, or unprotected process memory does not establish authority. If the requested parent separation cannot be proven on a supported platform, trusted mode is **unavailable**, with manual/external verification fallback; do not weaken DEC-006 silently. The precise capability mechanism is an **unapproved DR-02 implementation/security decision**; only separation principle was approved as DEC-007.
 
 The monotonic attempt contract must explicitly define unknown/incomplete, interrupted/cancelled, unavailable, rejected, manual/external awaiting resolution, verified/consumed terminal states, and the no-replay rules. The initial pure receipt parser is only a partial IMP-001 deliverable.

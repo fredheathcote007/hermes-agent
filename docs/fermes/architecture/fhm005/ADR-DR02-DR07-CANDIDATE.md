@@ -1,17 +1,18 @@
 # FHM-005 DR-02–DR-07 ADR candidates
 
-**Status: CANDIDATE — recommendations for owner decisions, not approved architecture.**
+**Status: DR-02 separation principle approved under DEC-007; concrete mechanisms and DR-03–DR-07 remain CANDIDATE, not approved for deployment.**
 
-DR-01 / DEC-006 is approved as a threat boundary and fallback policy. DEC-005’s requirement for
-native Linux **and** Windows qualification is approved as scope. The decisions below remain open;
-none authorizes implementation, merge, installation, deployment, default-on behavior, or acceptance
-of a Critical/High residual risk.
+DEC-006 approves the local attacker boundary and manual/external fallback. DEC-005 requires
+native Linux **and** Windows qualification. **DEC-007 approves DR-02 controller/parent/worker
+separation as an architecture principle**, but not the concrete same-user impersonation-resistant
+authentication mechanism. DR-03–DR-07 and DR-02 mechanism remain open; nothing here authorises
+privileged installation, deployment, default-on, or High/Critical residual risk acceptance.
 
 ## Decision summary
 
 | Decision | Recommended candidate | Alternatives retained | Owner decision needed |
 | --- | --- | --- | --- |
-| DR-02 | Protected controller is completion authority; project recipes run only in restricted executor | Manual/external only; broader trusted execution (not recommended) | Approve two-tier trust and no controller execution of untrusted shell |
+| DR-02 | **Principle approved DEC-007:** protected controller, independently authenticated parent, restricted worker, no privileged project scripts | Manual/external fallback remains required when trust unavailable | Design, independently review and natively prove same-user impersonation-resistant parent authentication and protected receipts before enabling |
 | DR-03 | Native Linux system UID/socket and Windows SCM service SID/named-pipe DACL/Job Objects | User daemon; interactive/startup fallback; remote verifier | Approve supported install/runtime matrix and fail-closed unsupported behavior |
 | DR-04 | Per-attempt nonce, immutable scope, object/digest binding, policy generation, freshness, one-use CAS | Advisory receipt only; signed receipt without OS boundary | Approve receipt fields, state transitions, and replay/TOCTOU rules |
 | DR-05 | Action-specific readback; unknown is sticky; manual/external resolution without replay | Best-effort retry; manual-only | Approve effect taxonomy, resolver authority, and UX |
@@ -19,6 +20,8 @@ of a Critical/High residual risk.
 | DR-07 | Same-SHA native Linux+Windows adversarial release gate; trusted mode opt-in | Manual-only release; narrower capability | Approve CI/release gates and separate default-on review |
 
 ## DR-02 — Explicit trust/execution model
+
+**Approval:** DEC-007 establishes the mandatory three-role separation. The choice and native proof of secure parent authentication, IPC, OS identities and protected receipts remain open engineering/security decisions.
 
 ### Recommended candidate: two-tier local model
 
@@ -44,7 +47,7 @@ prove arbitrary external effects.
 
 ### Unresolved material decision/risk
 
-Owner must confirm that “unprivileged workers and unrelated local processes in scope; local
+Owner already confirmed (DEC-006/007) that “unprivileged workers and unrelated local processes in scope; local
 root/Administrator out of scope” is the intended assurance boundary and that arbitrary project tests
 are either adequately constrained or limited to advisory/manual evidence. A controller/executor split
 alone is not approval.
