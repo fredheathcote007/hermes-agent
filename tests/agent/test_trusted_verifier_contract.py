@@ -212,3 +212,53 @@ def test_invalid_digest_is_incomplete_without_exception():
 
     assert result.status is ValidationStatus.INCOMPLETE
     assert result.reasons[0].startswith("unparseable_receipt:")
+
+
+def test_duplicate_json_keys_at_any_depth_fail_closed():
+    payload = _receipt()
+    wire = json.dumps(payload)
+    # A second trusted-status claim must not be resolved by last-key-wins.
+    wire = wire[:-1] + ', "status": "VERIFIED"}'
+    assert _validate(wire).status is ValidationStatus.INCOMPLETE
+    nested = wire.replace(', "status": "VERIFIED"}', '}')
+    nested = nested.replace('"subject": "file:src/app.py"',
+                            '"subject": "file:src/app.py", "subject": "file:src/app.py"')
+    assert _validate(nested).status is ValidationStatus.INCOMPLETE
+
+
+def test_empty_expected_effects_never_automatically_verify():
+    request = _request(expected_effects=())
+    payload = _receipt(request, artifact_subjects=[])
+    result = _validate(payload, request=request)
+    assert result.status is ValidationStatus.INCOMPLETE
+    assert "no_observable_expected_effects" in result.reasons
+
+
+def test_extra_artifact_subjects_fail_closed():
+    payload = _receipt()
+    payload["artifact_subjects"].append(
+        {"subject": "file:extra.txt", "digest": "sha256:" + "3" * 64}
+    )
+    result = _validate(payload)
+    assert result.status is ValidationStatus.INCOMPLETE
+    assert "effects_unobservable_or_mismatched" in result.reasons
+
+
+def test_expired_request_fails_closed():
+    req = _request(expires_at=NOW)
+    result = _validate(_receipt(req, expires_at=NOW.isoformat()), request=req)
+    assert result.status is ValidationStatus.INCOMPLETE
+    assert "request_expired" in result.reasons
+
+
+def test_truthy_nonboolean_provenance_is_not_authority():
+    result = _validate(trusted_source=1)
+    assert result.status is ValidationStatus.INCOMPLETE
+    assert result.reasons == ("untrusted_provenance",)
+
+
+def test_invalid_request_and_validation_clock_are_incomplete():
+    assert validate_receipt(
+        {}, _receipt(), consumed_nonces=set(), trusted_source=True, now=NOW,
+    ).status is ValidationStatus.INCOMPLETE
+    assert _validate(now="not-a-clock").status is ValidationStatus.INCOMPLETE

@@ -34,6 +34,11 @@ receipts, expiry beyond the request, replayed nonces, or unobservable/mismatched
 expected effect. A caller-owned mutable nonce set is required; the validator adds a nonce only
 after all checks pass and never maintains global replay state.
 
+A request with no observable expected effects cannot produce automated VERIFIED;
+prose-only tasks and external effects without independent readback use the
+manual/external fallback pending a separately approved evidence policy.
+Ambiguous duplicate JSON object keys are rejected rather than last-key-wins.
+
 The caller owns synchronization and durable storage for that set. Until those properties are
 provided by a qualified adapter/controller, this module cannot provide replay protection across
 threads or restarts by itself.

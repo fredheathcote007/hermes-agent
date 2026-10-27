@@ -299,6 +299,16 @@ def _wire_datetime(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject ambiguous JSON at every nested object, rather than last-key-wins."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ContractParseError("duplicate receipt JSON key")
+        result[key] = value
+    return result
+
+
 def _payload_mapping(payload: Mapping[str, object] | str | bytes) -> Mapping[str, object]:
     if isinstance(payload, Mapping):
         return payload
@@ -310,9 +320,13 @@ def _payload_mapping(payload: Mapping[str, object] | str | bytes) -> Mapping[str
     if not isinstance(payload, str):
         raise ContractParseError("receipt must be a mapping, JSON string, or UTF-8 bytes")
     try:
-        decoded = json.loads(payload, parse_constant=lambda value: (_ for _ in ()).throw(
-            ValueError(f"invalid JSON constant {value}"),
-        ))
+        decoded = json.loads(
+            payload,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"invalid JSON constant {value}"),
+            ),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ContractParseError("receipt JSON is not parseable") from exc
     if not isinstance(decoded, Mapping):
@@ -374,6 +388,11 @@ def validate_receipt(
     if (current_time - receipt.issued_at).total_seconds() > request.freshness_seconds:
         reasons.append("receipt_stale")
 
+    # An empty artifact/effect list must not validate vacuously as success.
+    # Prose-only and non-artifact work needs a separately approved evidence
+    # policy, or the explicit manual/external fail-closed fallback.
+    if not request.expected_effects:
+        reasons.append("no_observable_expected_effects")
     expected_artifacts = tuple(
         ArtifactSubject(subject=effect.subject, digest=effect.digest)
         for effect in request.expected_effects
