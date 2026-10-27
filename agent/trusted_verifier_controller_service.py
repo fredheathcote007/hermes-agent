@@ -140,8 +140,13 @@ class ForegroundControllerService:
                     break
                 raise
             with connection:
-                connection.settimeout(2.0)
-                self._handle_connection(connection)
+                try:
+                    connection.settimeout(2.0)
+                    self._handle_connection(connection)
+                except Exception:
+                    # A malformed peer or an adapter/serializer failure is
+                    # scoped to this connection; it must not stop the listener.
+                    continue
 
     def stop(self) -> None:
         self._stopping.set()
@@ -172,12 +177,14 @@ class ForegroundControllerService:
             # This foreground implementation cannot enable success. Trusted
             # issuance requires a separately approved service implementation.
             status = ControllerStatus.INCOMPLETE
-        response = ControllerMessage(
-            kind=MessageKind.STATUS, binding=message.binding, status=status
-        ).to_wire()
         try:
+            response = ControllerMessage(
+                kind=MessageKind.STATUS, binding=message.binding, status=status
+            ).to_wire()
             connection.sendall(_FRAME.pack(len(response)) + response)
-        except OSError:
+        except Exception:
+            # The response echoes untrusted identifiers and can expand beyond
+            # the wire bound. In that case, close without issuing any status.
             return
 
     def _cleanup_endpoint(self) -> None:

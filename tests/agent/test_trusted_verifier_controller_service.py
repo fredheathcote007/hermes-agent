@@ -10,6 +10,7 @@ import struct
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -63,13 +64,49 @@ def _request() -> ControllerMessage:
     return ControllerMessage(kind=MessageKind.REQUEST, binding=binding)
 
 
+def _near_limit_unicode_request() -> ControllerMessage:
+    message = _request()
+    request = message.binding.request
+    scope = [f"s{index}-" + "界" * 3 + "a" * 4 for index in range(512)]
+    low, high = 0, 480
+    candidate = replace(
+        message,
+        binding=replace(message.binding, request=replace(request, scope=tuple(scope))),
+    )
+    while low <= high:
+        padding = (low + high) // 2
+        adjusted_scope = (*scope[:-1], scope[-1] + "a" * padding)
+        updated = replace(request, scope=adjusted_scope)
+        trial = replace(
+            message,
+            binding=replace(message.binding, request=updated),
+        )
+        try:
+            encoded_length = len(trial.to_wire())
+        except ControllerProtocolError:
+            encoded_length = MAX_CONTROLLER_MESSAGE_BYTES + 1
+        if encoded_length <= MAX_CONTROLLER_MESSAGE_BYTES:
+            candidate = trial
+            low = padding + 1
+        else:
+            high = padding - 1
+    assert MAX_CONTROLLER_MESSAGE_BYTES - 128 < len(candidate.to_wire())
+    with pytest.raises(ControllerProtocolError, match="byte limit"):
+        ControllerMessage(
+            kind=MessageKind.STATUS,
+            binding=candidate.binding,
+            status=ControllerStatus.INCOMPLETE,
+        ).to_wire()
+    return candidate
+
+
 def _socket_dir() -> Path:
     base = Path(os.environ.get("RUNNER_TEMP") or os.environ["TMPDIR"])
     if base == Path("/tmp") or Path("/tmp") in base.parents:
         raise AssertionError(
             "real socket tests require a runner-owned directory outside /tmp"
         )
-    directory = base / f"fhm005-svc-{os.getpid()}"
+    directory = base / f"s{os.getpid()}"
     directory.mkdir(exist_ok=True)
     return directory
 
@@ -171,6 +208,14 @@ def test_real_process_observes_kernel_peer_and_never_issues_trusted_result():
             None,
         ),
         (b"x" * 4, MAX_CONTROLLER_MESSAGE_BYTES + 1),
+        (
+            ControllerMessage(
+                kind=MessageKind.STATUS,
+                binding=_request().binding,
+                status=ControllerStatus.INCOMPLETE,
+            ).to_wire(),
+            None,
+        ),
     ],
 )
 def test_malformed_oversized_and_unknown_requests_are_closed(payload, length):
@@ -179,8 +224,32 @@ def test_malformed_oversized_and_unknown_requests_are_closed(payload, length):
     endpoint = socket_dir / "s"
     try:
         assert _exchange(endpoint, payload, declared_length=length) == b""
+        response = ControllerMessage.from_wire(
+            _exchange(endpoint, _request().to_wire())
+        )
+        assert response.status is ControllerStatus.INCOMPLETE
     finally:
         _stop_service(process)
+    assert not endpoint.exists()
+    socket_dir.rmdir()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux AF_UNIX process transport")
+def test_unicode_response_overflow_closes_connection_and_listener_continues():
+    socket_dir = _socket_dir()
+    process = _start_service(socket_dir)
+    endpoint = socket_dir / "s"
+    try:
+        request = _near_limit_unicode_request()
+        assert _exchange(endpoint, request.to_wire()) == b""
+        response = ControllerMessage.from_wire(
+            _exchange(endpoint, _request().to_wire())
+        )
+        assert response.status is ControllerStatus.INCOMPLETE
+        assert response.status is not ControllerStatus.ACCEPTED_FOR_VERIFICATION
+    finally:
+        _stop_service(process)
+    assert process.returncode == 0
     assert not endpoint.exists()
     socket_dir.rmdir()
 
