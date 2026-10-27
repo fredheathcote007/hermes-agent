@@ -1,6 +1,6 @@
 # Project State
 project_id: fermes-hermes
-Updated: 2026-10-26 Australia/Perth
+Updated: 2026-10-27 Australia/Perth
 
 ## BLUF
 Goal: maintain an upstream-syncable fork of Hermes with dependable local Qwen/LM Studio execution and eventually native self-learning, memory, compaction and validation-gated self-optimisation.
@@ -21,3 +21,4 @@ The third auxiliary draft has been ported and accepted at the source-test level 
 - DEC-006 owner-approved Option B deterministic application-owned memory commit as architecture baseline **subject to detailed security design, fault injection and independent review**. Existing unreceipted note mutation can duplicate content after SIGKILL. Cursor adversarial review documents current 4 P0 / 6 P1 risks.
 - Isolated Option B worktree `fermes-reme-fhm007-optionb-20261027` based on 4463d20 with crash regression commit 0348b47. Codex review/implementation in progress; no deployment or merge authorised.
 - FHM-006 pre-compression checkpoint v2 remains separately unapproved and disabled. Protect all original worktrees; keep PR #1 draft until new exact-head CI, crash recovery and real Qwen testing pass.
+- Option B remains NOT MERGE-READY: 16/16 focused atomic/digest host tests and one real embedded synthetic note+receipt PASS. After-receipt/pre-ACK SIGKILL 1/1 host test PASS. After-note/pre-receipt FAIL: replay modifies source transcript before checking marker; original two-row source digest matches marker, but queued retries expanded transcript to 1672 rows in the failed isolated fixture. New request with changed source evidence FAILS closed against older marker. Before-note replay FAIL due synthetic model path fixture mismatch. Codex workspace-sandbox async tests hang, but host executor and focused tests pass; use Project Coordinator host environment for validation. Detailed recovery remediation assigned to Codex; no candidate push, merge or deployment.
