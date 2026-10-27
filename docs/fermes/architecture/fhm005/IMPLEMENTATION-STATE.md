@@ -83,3 +83,11 @@ Independent Cursor review identified legacy receipt, delegate, request-client, m
 ## 27 October 2026 — source-only IMP-002 checkpoint
 
 PR #33 merged source-only (see above), no privileged runtime service, keys, OS configuration, production deployment or FHM-007 writes. Current trusted-verifier status remains P0 OPEN; manual/external verification fallback preserved.
+
+## 27 October 2026 — Linux sandbox dependency gate
+
+The [sandbox dependency security gate](SANDBOX-DEPENDENCY-SECURITY-20261027.md) records the current
+Ubuntu 26.04 bubblewrap preflight (`0.11.1-1ubuntu0.3`, candidate unchanged, non-setuid `0755`) and
+blocks hostile-worker qualification until a security-approved fixed or alternative boundary is
+qualified. This inventory is not a hostile-worker PASS and does not authorize package or service
+changes.
