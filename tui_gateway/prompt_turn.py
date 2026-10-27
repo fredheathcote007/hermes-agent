@@ -308,10 +308,19 @@ def _commit_turn_history(
             "but was not saved to session history.")
 
 
-def _result_status(result: dict) -> str:
+def _result_status(result: Any) -> str:
+    """Reduce a run result to the TUI's terminal status, failing closed on failure flags."""
+    if not isinstance(result, dict):
+        return "complete"
     return (
         "interrupted" if result.get("interrupted")
-        else "error" if result.get("error") else "complete")
+        else "error" if (
+            result.get("error")
+            or result.get("failed")
+            or result.get("verification_unresolved")
+            or result.get("partial")
+            or result.get("turn_exit_reason") == "verification_unresolved"
+        ) else "complete")
 
 
 def _turn_outcome(result: Any, error_surface: dict | None = None) -> tuple[Any, str, str | None]:
