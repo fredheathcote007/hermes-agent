@@ -19,6 +19,8 @@ privileged installation, deployment, default-on, or High/Critical residual risk 
 | DR-06 | Minimized redacted local receipt; explicit retention/purge; crypto optional defense-in-depth | Rich local diagnostics; signatures/MACs as primary | Approve privacy/retention and whether optional crypto is worth cost |
 | DR-07 | Same-SHA native Linux+Windows adversarial release gate; trusted mode opt-in | Manual-only release; narrower capability | Approve CI/release gates and separate default-on review |
 
+Detailed DR-02/DR-04 security mechanism, same-user attack analysis, receipt lifecycle, native proof obligations, and owner questions: [security design candidate](DR02-DR04-SECURITY-DESIGN-CANDIDATE.md). It remains unapproved and unproven.
+
 ## DR-02 — Explicit trust/execution model
 
 **Approval:** DEC-007 establishes the mandatory three-role separation. The choice and native proof of secure parent authentication, IPC, OS identities and protected receipts remain open engineering/security decisions.
