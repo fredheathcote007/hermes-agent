@@ -8,11 +8,13 @@ body:
       value: |
         Sorry you're having trouble! Please fill out the details below so we can help.
 
+        **Privacy check:** Redact API keys, tokens, passwords, private logs, memory files, session transcripts, local paths, hostnames, IP addresses, and other network details before posting. Never share `.env`, `auth.json`, `state.db`, or raw logs. Inspect any `hermes debug share` output first; prefer `hermes debug share --local` and paste only a sanitized excerpt.
+
         **Quick checks first:**
         - Run `hermes debug share` and paste the links in the Debug Report section below
         - If you're in a chat session, you can use `/debug` instead — it does the same thing
         - Try `hermes update` to get the latest version
-        - Check the [README troubleshooting section](https://github.com/NousResearch/hermes-agent#troubleshooting)
+        - Check the [README troubleshooting section](https://github.com/fredheathcote007/hermes-agent#troubleshooting)
         - For general questions, consider the [Nous Research Discord](https://discord.gg/NousResearch) for faster help
 
   - type: textarea
@@ -79,12 +81,13 @@ body:
     attributes:
       label: Debug Report
       description: |
-        Run `hermes debug share` from your terminal and paste the links it prints here.
-        This uploads your system info, config, and recent logs to a paste service automatically.
+        Run `hermes debug share` from your terminal only after reviewing its output and paste sanitized links here.
+        It may upload system info, config, and recent logs to a paste service automatically. Prefer `hermes debug share --local` and paste only redacted excerpts.
+        Never include API keys, tokens, passwords, private logs, memory files, session transcripts, local paths, hostnames, IP addresses, or other network details.
 
         If you're in an interactive chat session, you can also use the `/debug` slash command — it does the same thing.
 
-        If the upload fails or install didn't get that far, run `hermes debug share --local` and paste the output directly.
+        If the upload fails or install didn't get that far, run `hermes debug share --local` and paste only sanitized output.
         If even that doesn't work, run `hermes doctor` and paste that output instead.
       placeholder: |
         Report   https://paste.rs/abc123
@@ -96,7 +99,7 @@ body:
     id: error-output
     attributes:
       label: Full Error Output
-      description: Paste the complete error message or traceback. This will be auto-formatted.
+      description: Paste a redacted error message or traceback. Remove secrets, private logs, memory content, local paths, hostnames, IP addresses, and other network details first.
       render: shell
     validations:
       required: true
