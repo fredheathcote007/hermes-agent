@@ -112,13 +112,14 @@ class HandshakeModel:
         )
         self._clock = clock or (lambda: datetime.now(UTC).timestamp())
         self._pending: Challenge | None = None
+        self._issued: set[bytes] = set()
         self._consumed: set[bytes] = set()
 
     def issue_challenge(self, *, ttl_seconds: int = 30) -> Challenge:
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 300:
             raise HandshakeRejected("invalid challenge lifetime")
         nonce = self._nonce_factory(32)
-        if not isinstance(nonce, bytes) or len(nonce) != 32 or nonce in self._consumed:
+        if not isinstance(nonce, bytes) or len(nonce) != 32 or nonce in self._issued:
             raise HandshakeRejected("invalid or replayed nonce")
         challenge = Challenge(
             self._controller.session_id,
@@ -127,6 +128,7 @@ class HandshakeModel:
             nonce,
             self._clock() + ttl_seconds,
         )
+        self._issued.add(nonce)
         self._pending = challenge
         return challenge
 
