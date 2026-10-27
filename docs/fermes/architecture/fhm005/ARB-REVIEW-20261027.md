@@ -1,7 +1,7 @@
 # FHM-005 — Full Architecture Review Board, 27 October 2026
 
 project_id: fermes-hermes
-status: CANDIDATE — DECISION REQUIRED / NOT APPROVED FOR IMPLEMENTATION
+status: CANDIDATE — DR-01 APPROVED / DR-02–DR-07 OPEN / NOT APPROVED FOR IMPLEMENTATION
 frozen_source_sha: de83ce3b01fdc910a117e285a7acb72a98bf2841
 issue: https://github.com/fredheathcote007/hermes-agent/issues/5
 
@@ -16,7 +16,7 @@ issue: https://github.com/fredheathcote007/hermes-agent/issues/5
 
 ## Decision queue (one owner decision at a time)
 
-1. **DR-01 — Threat boundary (MATERIAL, owner decision required).** Recommended: protect against compromised delegated workers and other unprivileged local processes through isolated execution and a protected controller, while explicitly excluding compromise of local root/Administrator and equivalent privileged control. Alternatives: manual/external verification only; or hardware/remote trust model including local administrators.
+1. **DR-01 — APPROVED (DEC-006, 27 October 2026).** Protect against compromised delegated workers and other unprivileged local processes through isolated execution and protected verifier authority. Exclude compromise of local root/Administrator (or equivalent privilege) from the initial guarantee. **Manual or externally attested verification is the approved fallback** whenever independent automated verification is unavailable; never silently accept missing proof. This resolves threat scope, NOT detailed architecture implementation.
 2. DR-02 — Explicit trust/execution model: protected controller as completion authority; untrusted project recipes run with reduced privileges, never under controller identity.
 3. DR-03 — Supported installation and platform matrix: native Linux system service and Windows SCM service identities, IPC access controls, elevated one-off installation, fail closed if unsupported.
 4. DR-04 — Receipt and acceptance protocol: per-attempt nonce, immutable scope, artifact identity/digest, policy generation, freshness, CAS consumption and no cross-session mutation.

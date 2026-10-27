@@ -39,3 +39,12 @@ Status: Owner-approved platform scope; architecture decision pending
 Date: 2026-10-27 (Australia/Perth)
 Decision: The first qualified trusted-verifier capability must support and pass native security and operational acceptance on both Linux and Windows. Neither platform may be skipped or treated as equivalent solely through simulations. This does not approve the implementation architecture, trusted-verifier identity/IPC design, deployment, default-on promotion or acceptance of local privileged attacker risk.
 Evidence: Owner expressly approved Option B and requested the Full FHM-005 Architecture Review Board. Candidate review: `docs/fermes/architecture/fhm005/ARB-REVIEW-20261027.md`.
+
+
+## DEC-006 — Trusted-verifier local attacker boundary and fallback
+Scope: FHM-005 / ARB DR-01
+Status: Owner-approved threat scope and fallback policy; detailed architecture unapproved
+Date: 2026-10-27 (Australia/Perth)
+Decision: Protect against compromised/malicious delegated workers and unprivileged local processes by enforcing a separate restricted execution context and protected verifier/controller authority. One-time elevated installation is permitted. Compromise of local root/Administrator or an equivalently privileged principal is outside the initial assurance guarantee. When independent automated verification is unavailable, fall back to manual operator verification or externally attested verification; do not manufacture a trusted success verdict and preserve DEC-004 fail closed. This does not waive native Linux and Windows qualification required by DEC-005.
+Evidence: User explicitly agreed, “Approve Option A, with Option B retained as the fallback when independent verification is unavailable.”
+Not approved by this decision: controller implementation/language, IPC/authentication mechanism, receipt crypto, process isolation tooling, external effects proof, installation or deployment, merging PRs, default-on, accepting outstanding High/Critical risks. These remain DR-02 to DR-07.

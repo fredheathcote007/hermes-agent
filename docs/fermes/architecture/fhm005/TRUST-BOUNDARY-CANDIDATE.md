@@ -23,7 +23,7 @@ The opt-in Phase 1 SQLite ledger records pending and verification observations, 
 
 - Linux: system-owned service with non-login service identity, protected state directory and Unix-domain socket peer authentication. Validate actual systemd sandbox/cgroup behaviour on target kernels; do not assume per-user units provide equivalent isolation.
 - Windows: Windows Service Control Manager identity/service SID, explicit named-pipe DACL and token checks, protected receipt ACLs, and Job Objects with kill-on-close. No Startup-folder fallback, and no unchecked inherited privileges.
-- In both cases: installation may require administrator elevation, but normal runtime must not. Local root/Administrator compromise is *not* currently approved as in scope or out of scope; DR-01 must resolve that.
+- In both cases: installation may require administrator elevation, but normal runtime must not. **DEC-006 approved DR-01**: compromised unprivileged workers are in scope; root/Administrator compromise is out of scope for the initial guarantee. Manual/external independent verification is the fail-closed fallback. DR-02 through DR-07, detailed trust mechanism and release remain open.
 
 ## Alternatives
 
