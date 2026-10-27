@@ -48,7 +48,13 @@
         "no OS/service dependency"
       ],
       "rollback": "Delete only the unreferenced contract module; retain current opt-in fail-closed path.",
-      "gate": "Pure receipt contract started on branch fermes/fhm005-verifier-protocol-20261027 (e2680265); complete monotonic state-machine contract and independent review before marking task complete. No production wiring or trusted authority."
+      "gate": "Pure receipt contract started on branch fermes/fhm005-verifier-protocol-20261027 (e2680265); complete monotonic state-machine contract and independent review before marking task complete. No production wiring or trusted authority.",
+      "status": "completed_source_only",
+      "completed_evidence": [
+        "PR #26 merged 5dbb12ca (host 77 pass, exact-head CI success, independent Cursor)",
+        "PR #31 merged d8d4884f (host 56 pass, exact-head CI #40438572424 success, independent Codex P1 fixed)",
+        "Issue #27 completed"
+      ]
     },
     {
       "id": "FHM005-IMP-002",

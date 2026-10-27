@@ -1,6 +1,6 @@
 # FHM-005 implementation state
 
-**Status: BLUEPRINT CANDIDATE — isolated nonprivileged FHM005-IMP-001 contract development begun; trusted architecture NOT approved.**
+**Status: BLUEPRINT CANDIDATE — nonprivileged FHM005-IMP-001 contract/state-machine implementation MERGED; trusted controller architecture and release NOT approved.**
 
 | Field | State |
 | --- | --- |
@@ -36,15 +36,16 @@ and [DECISIONS.md](../../memory/DECISIONS.md). This candidate does not edit thos
   native validation plan written under this directory.
 * Challenger dissent and manual/external fallback retained explicitly.
 
-## Next task
+## Completed implementation milestone — FHM005-IMP-001
 
-**FHM005-IMP-001 — complete and independently review the pure DTO/status/state-machine contract.**
+- [PR #26](https://github.com/fredheathcote007/hermes-agent/pull/26) MERGED at `5dbb12ca030c022dbcfc14fa5be400ab4d979d69`: fail-closed versioned request/receipt data contract; independent Cursor no-P0/P1 source review; 77 focused host tests PASS, hosted CI PASS.
+- [PR #31](https://github.com/fredheathcote007/hermes-agent/pull/31) MERGED at `d8d4884f61c0c8f9baec8f3a1ba7e97b0148fcd6`: pure monotonic attempt-state contract; independent Codex review found and verified fix of late-worker failure transition P1; 56 focused host tests PASS; exact-head CI #40438572424 PASS.
+- [Issue #27](https://github.com/fredheathcote007/hermes-agent/issues/27) CLOSED completed.
+- **Limitation:** no controller, authenticated IPC, protected service identity, durable one-use CAS, trusted effect readback, parent/UI integration or native Linux/Windows security qualification exists from these two contracts. Python object/status fields must never be treated as independent authority.
 
-Codex has started a pure receipt contract module on the separate branch `fermes/fhm005-verifier-protocol-20261027`; host tests and independent review are required before calling IMP-001 complete. Complete the monotonic state machine and interface constraints. Start with a pure contract module and behaviour tests. It must be independent of OS services,
-process spawning, IPC, UI, and the legacy SQLite ledger. Prove DTO validation, legal transitions,
-sticky `unknown_incomplete`, exact receipt binding fields, expiry, and one-use terminal behavior.
-Do not create a trusted receipt, service, installer, default-on switch, or product behavior change in
-this first task.
+## Next task — FHM005-IMP-002 candidate
+
+Specify canonical workspace/artefact identity, version and digest rules and negative tests, including rename/symlink/junction/reparse-point, TOCTOU and scope binding. Pure design/tests may be reviewed, but **DR-04 receipt security semantics, DR-03 native platform implementation and DR-02 concrete same-user-resistant parent authentication must be approved and proven before trusted controller/IPC implementation or enablement**. Keep Linux and Windows native qualification as a combined release gate (DEC-005).
 
 ## Gates before each expansion
 
