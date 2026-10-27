@@ -74,6 +74,16 @@ def test_nonce_replay_fails_closed():
         model.issue_challenge()
 
 
+def test_replacement_challenge_succeeds_before_any_bad_response():
+    nonces = iter((b"a" * 32, b"b" * 32))
+    model = _model(nonce_factory=lambda size: next(nonces))
+    model.issue_challenge()
+    replacement = model.issue_challenge()
+
+    capability = model.accept_response(model.parent_response(replacement))
+    assert (capability.session_id, capability.generation) == ("session-a", 4)
+
+
 def test_nonce_replay_fails_after_superseding_challenge():
     nonces = iter((b"a" * 32, b"b" * 32, b"a" * 32))
     model = _model(nonce_factory=lambda size: next(nonces))
@@ -84,9 +94,8 @@ def test_nonce_replay_fails_after_superseding_challenge():
         model.issue_challenge()
     with pytest.raises(HandshakeRejected, match="mismatch"):
         model.accept_response(model.parent_response(original))
-
-    capability = model.accept_response(model.parent_response(replacement))
-    assert (capability.session_id, capability.generation) == ("session-a", 4)
+    with pytest.raises(HandshakeRejected, match="no pending"):
+        model.accept_response(model.parent_response(replacement))
 
 
 @pytest.mark.parametrize(

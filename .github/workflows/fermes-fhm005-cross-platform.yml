@@ -56,7 +56,7 @@ jobs:
               throw "Required FHM-005 source test is missing: $file"
             }
           }
-          uv run --no-sync python -m pytest -q -p no:cacheprovider --maxfail=1 $testFiles
+          uv run --no-sync python -m pytest -q -p no:cacheprovider $testFiles
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
