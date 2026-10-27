@@ -1,9 +1,9 @@
 # Fermes Hermes — Upstream issue and PR compatibility crosswalk (27 October 2026)
 
-project_id: `fermes-hermes`  
-status: **REVIEW SNAPSHOT — NOT deployment approval**  
-fork: `fredheathcote007/hermes-agent`  
-target source baseline: `fermes/qwen-lmstudio-v0225-20261026`  
+project_id: `fermes-hermes`
+status: **REVIEW SNAPSHOT — NOT deployment approval**
+fork: `fredheathcote007/hermes-agent`
+target source baseline: `fermes/qwen-lmstudio-v0225-20261026`
 record owner: [FHM-011](https://github.com/fredheathcote007/hermes-agent/issues/11)
 
 > **Canonical tracking:** GitHub issues and actual PR/merge/CI evidence take precedence over this dated document. This is a review snapshot, not a separately maintained authoritative backlog. Check current upstream state before reuse; do not equate merged source with deployed runtime.
