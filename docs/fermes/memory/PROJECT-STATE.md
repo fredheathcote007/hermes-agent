@@ -16,3 +16,8 @@ The third auxiliary draft has been ported and accepted at the source-test level 
 - Official upstream remains `NousResearch/hermes-agent`; fork remote for pushes; update procedure `docs/fermes/UPSTREAM-SYNC.md`.
 - Repository GitHub Issues enabled 2026-10-26 and backlog FHM-001 to FHM-014 created.
 - No production Hermes install has been changed by the fork work.
+## FHM-007 status update — 2026-10-27 Australia/Perth
+- ReMe fork PR #1 remains DRAFT; exact published commit `4463d20` has 8/8 GitHub workflows PASS, including Python 3.11–3.14. This proves CI compatibility, NOT crash safety or production acceptance.
+- DEC-006 owner-approved Option B deterministic application-owned memory commit as architecture baseline **subject to detailed security design, fault injection and independent review**. Existing unreceipted note mutation can duplicate content after SIGKILL. Cursor adversarial review documents current 4 P0 / 6 P1 risks.
+- Isolated Option B worktree `fermes-reme-fhm007-optionb-20261027` based on 4463d20 with crash regression commit 0348b47. Codex review/implementation in progress; no deployment or merge authorised.
+- FHM-006 pre-compression checkpoint v2 remains separately unapproved and disabled. Protect all original worktrees; keep PR #1 draft until new exact-head CI, crash recovery and real Qwen testing pass.
