@@ -31,12 +31,16 @@ _FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
 _PIPE_TYPE_BYTE = 0x00000000
 _PIPE_READMODE_BYTE = 0x00000000
 _PIPE_NOWAIT = 0x00000001
+_PIPE_WAIT = 0x00000000
 _PIPE_REJECT_REMOTE_CLIENTS = 0x00000008
 _ERROR_PIPE_CONNECTED = 535
 _ERROR_PIPE_LISTENING = 536
 _ERROR_NO_DATA = 232
+_ERROR_BROKEN_PIPE = 109
+_ERROR_PIPE_NOT_CONNECTED = 233
 _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _IO_TIMEOUT_SECONDS = 2.0
+_PIPE_OUTPUT_BUFFER_BYTES = MAX_CONTROLLER_MESSAGE_BYTES * 2
 
 
 class WindowsControllerServiceError(RuntimeError):
@@ -117,41 +121,50 @@ class WindowsForegroundControllerService:
                 "startup requires explicit no-trusted-success and no-service-install guards"
             )
         self._kernel = _kernel32()
-        self.pipe_name = ""
+        # Keep one stable endpoint for clients across accepted connections.
+        self.pipe_name = rf"\\.\pipe\hermes-fhm005-{uuid.uuid4().hex}"
         self._stop = threading.Event()
         self._handle = None
         self.last_observed_client_pid: int | None = None
 
     def serve_forever(self) -> None:
-        while not self._stop.is_set():
-            handle = self._create_pipe()
-            self._handle = handle
-            try:
-                if self._wait_for_client(handle):
-                    self._handle_connection(handle)
-            finally:
-                self._kernel.DisconnectNamedPipe(handle)
-                self._kernel.CloseHandle(handle)
-                if self._handle == handle:
-                    self._handle = None
+        handle = self._create_pipe()
+        self._handle = handle
+        try:
+            while not self._stop.is_set():
+                connected = False
+                try:
+                    connected = self._wait_for_client(handle)
+                    if connected:
+                        self._handle_connection(handle)
+                finally:
+                    if connected:
+                        self._kernel.DisconnectNamedPipe(handle)
+                if not connected:
+                    break
+        finally:
+            self._kernel.CloseHandle(handle)
+            if self._handle == handle:
+                self._handle = None
 
     def stop(self) -> None:
         self._stop.set()
 
     def _create_pipe(self):
-        # A fresh name plus FIRST_PIPE_INSTANCE closes the disconnect/recreate
-        # race where a same-user process could squat a reused endpoint.
-        self.pipe_name = rf"\\.\pipe\hermes-fhm005-{uuid.uuid4().hex}"
+        # Keep this instance alive across requests so FIRST_PIPE_INSTANCE
+        # protects the endpoint without a disconnect/recreate gap.
         flags = _PIPE_ACCESS_DUPLEX | _FILE_FLAG_FIRST_PIPE_INSTANCE
         handle = self._kernel.CreateNamedPipeW(
             self.pipe_name,
             flags,
             _PIPE_TYPE_BYTE
             | _PIPE_READMODE_BYTE
+            # NOWAIT is used for bounded connect polling. Frame reads and
+            # response-drain checks use WAIT; replies switch briefly to NOWAIT.
             | _PIPE_NOWAIT
             | _PIPE_REJECT_REMOTE_CLIENTS,
             1,
-            MAX_CONTROLLER_MESSAGE_BYTES + _FRAME.size,
+            _PIPE_OUTPUT_BUFFER_BYTES,
             MAX_CONTROLLER_MESSAGE_BYTES + _FRAME.size,
             0,
             None,
@@ -163,6 +176,11 @@ class WindowsForegroundControllerService:
         return handle
 
     def _wait_for_client(self, handle) -> bool:
+        connect_mode = wintypes.DWORD(_PIPE_NOWAIT)
+        if not self._kernel.SetNamedPipeHandleState(
+            handle, ctypes.byref(connect_mode), None, None
+        ):
+            raise WindowsControllerServiceError("could not set named-pipe connect mode")
         while not self._stop.is_set():
             if self._kernel.ConnectNamedPipe(handle, None):
                 return True
@@ -177,6 +195,11 @@ class WindowsForegroundControllerService:
         return False
 
     def _handle_connection(self, handle) -> None:
+        wait_mode = wintypes.DWORD(_PIPE_WAIT)
+        if not self._kernel.SetNamedPipeHandleState(
+            handle, ctypes.byref(wait_mode), None, None
+        ):
+            return
         client_pid = wintypes.ULONG()
         if not self._kernel.GetNamedPipeClientProcessId(
             handle, ctypes.byref(client_pid)
@@ -202,7 +225,11 @@ class WindowsForegroundControllerService:
             ).to_wire()
         except ControllerProtocolError:
             return
-        self._write_all(handle, _FRAME.pack(len(response)) + response)
+        if self._write_all(handle, _FRAME.pack(len(response)) + response):
+            # DisconnectNamedPipe discards unread output. Wait briefly for the
+            # client to finish its response read and close; never block on
+            # FlushFileBuffers, which can wait forever on a hostile client.
+            self._wait_for_client_close(handle)
 
     def _read_frame(self, handle) -> bytes:
         deadline = time.monotonic() + _IO_TIMEOUT_SECONDS
@@ -241,20 +268,52 @@ class WindowsForegroundControllerService:
             raise ControllerProtocolError("frame length is outside the protocol bound")
         return exact(length)
 
-    def _write_all(self, handle, payload: bytes) -> None:
+    def _write_all(self, handle, payload: bytes) -> bool:
+        if len(payload) > MAX_CONTROLLER_MESSAGE_BYTES + _FRAME.size:
+            return False
+        nonblocking_mode = wintypes.DWORD(_PIPE_NOWAIT)
+        if not self._kernel.SetNamedPipeHandleState(
+            handle, ctypes.byref(nonblocking_mode), None, None
+        ):
+            return False
         offset = 0
         deadline = time.monotonic() + _IO_TIMEOUT_SECONDS
-        while offset < len(payload) and time.monotonic() < deadline:
-            written = wintypes.DWORD()
-            chunk = payload[offset:]
-            buffer = ctypes.create_string_buffer(chunk)
-            if not self._kernel.WriteFile(
-                handle, buffer, len(chunk), ctypes.byref(written), None
+        try:
+            while (
+                offset < len(payload)
+                and not self._stop.is_set()
+                and time.monotonic() < deadline
             ):
+                written = wintypes.DWORD()
+                chunk = payload[offset:]
+                buffer = ctypes.create_string_buffer(chunk)
+                if self._kernel.WriteFile(
+                    handle, buffer, len(chunk), ctypes.byref(written), None
+                ):
+                    offset += written.value
+                elif ctypes.get_last_error() != _ERROR_NO_DATA:
+                    return False
+                if offset < len(payload):
+                    self._stop.wait(0.01)
+            return offset == len(payload)
+        finally:
+            wait_mode = wintypes.DWORD(_PIPE_WAIT)
+            self._kernel.SetNamedPipeHandleState(
+                handle, ctypes.byref(wait_mode), None, None
+            )
+
+    def _wait_for_client_close(self, handle) -> None:
+        deadline = time.monotonic() + 0.5
+        while not self._stop.is_set() and time.monotonic() < deadline:
+            available = wintypes.DWORD()
+            if not self._kernel.PeekNamedPipe(
+                handle, None, 0, None, ctypes.byref(available), None
+            ):
+                error = ctypes.get_last_error()
+                if error in (_ERROR_BROKEN_PIPE, _ERROR_PIPE_NOT_CONNECTED):
+                    return
                 return
-            if written.value == 0:
-                return
-            offset += written.value
+            self._stop.wait(0.01)
 
 
 def _main() -> int:

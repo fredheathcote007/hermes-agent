@@ -1,4 +1,4 @@
-"""Native named-pipe transport checks for the unprivileged FHM-005 adapter."""
+"""Native transport checks; default test ACLs do not qualify a protected SCM DACL."""
 
 from __future__ import annotations
 
@@ -203,13 +203,15 @@ def test_non_windows_import_and_startup_fail_explicitly():
 def test_native_pipe_returns_incomplete_and_observes_kernel_client_pid():
     kernel = _native_client_api()
     service, thread, errors = _start_service()
+    pipe_name = service.pipe_name
     try:
-        response = ControllerMessage.from_wire(
-            _exchange(kernel, service.pipe_name, _request().to_wire())
-        )
-        assert response.status is ControllerStatus.INCOMPLETE
-        assert response.binding == _request().binding
-        assert response.status is not ControllerStatus.ACCEPTED_FOR_VERIFICATION
+        for _ in range(2):
+            response = ControllerMessage.from_wire(
+                _exchange(kernel, pipe_name, _request().to_wire())
+            )
+            assert response.status is ControllerStatus.INCOMPLETE
+            assert response.binding == _request().binding
+            assert response.status is not ControllerStatus.ACCEPTED_FOR_VERIFICATION
         assert service.last_observed_client_pid == os.getpid()
         assert not errors
     finally:
