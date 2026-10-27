@@ -91,7 +91,37 @@ python3 scripts/fermes_upstream_compare.py \
   --format markdown
 ```
 
-Use `--format json` for machine-readable reports. The command checks that the path is a Git
+Use `--format json` for machine-readable reports. The default `--mode full` is the existing
+patch-equivalence comparison and retains its fail-closed limits: 256 non-merge commits, 4 MiB
+Git output/patch input, 30 seconds total, bounded report items/output, aggregate `--binary` diffs,
+and per-commit patch-ID enumeration. Use explicit `--mode overview` for large-release impact
+triage when the full comparison would exceed those limits:
+
+```bash
+python3 scripts/fermes_upstream_compare.py \
+  --repo /path/to/clean/hermes-agent \
+  --upstream-base bf0203a794a07aac3ff764972ab9087baa4e4f4e \
+  --upstream-target 765933299d885e850390ed1d8e4fd4d37fae8342 \
+  --fork 935f10ef33047a494d5d9c8dd7ddf309916264e6 \
+  --mode overview \
+  --format markdown
+```
+
+Overview mode does not read aggregate binary patches or enumerate per-commit patch IDs. It uses
+bounded native `git diff --name-status -z` (including rename pairs), `git diff --shortstat`, and
+`git rev-list --count --no-merges` for each baseline-to-target side. It reports exact resolved
+SHAs, canonical remote identities, change/file/path/commit counts, deterministic sampled path and
+change lists, overlap totals, and risk-review buckets. NUL-delimited paths are handled as bytes so
+binary changes, rename paths, odd names, and non-UTF-8 names remain representable. Path samples,
+Git output, rendered reports, and the shared monotonic time budget remain bounded.
+
+Overview output is explicitly static-overlap-only: `review_required` is true,
+`compatibility_status` is `not-established`, `patch_equivalence` is `not-evaluated`, and
+`merge_conflict_status` is `not-tested`. A no-overlap result is not a safety or compatibility
+finding; the report warns about that distinction. JSON and Markdown include the schema version and
+selected mode. Errors include the failed stage and remain nonzero/fail closed.
+
+The command checks that the path is a Git
 worktree, the checkout is clean, both canonical repository identities are present among the
 configured remotes, refs resolve to commits, and the upstream baseline is an ancestor of both
 comparison targets. It discovers remotes by their URLs; `origin`, `upstream`, and `fork` are not
@@ -99,7 +129,7 @@ special names. It does not fetch, contact GitHub, call an API, merge, checkout, 
 or write a report or any other output into the repository. Git subprocesses use argv directly,
 closed stdin, timeouts, and bounded output.
 
-The comparison has a shared monotonic 30-second budget and refuses histories over 256 non-merge
+The full comparison has a shared monotonic 30-second budget and refuses histories over 256 non-merge
 commits. Patch-ID input/output is streamed through bounded pipes and is killed and reaped on timeout.
 Report path, change, and equivalent-pair evidence is deterministically capped at 256 items with
 totals and truncation warnings; the rendered JSON or Markdown is capped at 1 MiB and fails closed
