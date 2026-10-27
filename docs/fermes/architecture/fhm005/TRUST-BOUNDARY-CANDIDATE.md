@@ -1,7 +1,7 @@
 # FHM-005 — Trusted verifier security boundary (candidate architecture)
 
 project_id: fermes-hermes
-status: PROPOSED — NOT APPROVED
+status: DR-02 separation principle APPROVED under DEC-007 — detailed design, OS mechanisms and release NOT APPROVED
 related: DEC-004, DEC-005 (cross-platform scope), issue FHM-005
 baseline: de83ce3b01fdc910a117e285a7acb72a98bf2841
 
@@ -34,3 +34,7 @@ The opt-in Phase 1 SQLite ledger records pending and verification observations, 
 ## Consequences and open gates
 
 Potential new local service/installer/IPC attack surface. Strict Linux and Windows test matrix, privacy policy, no-secret egress, configuration upgrades, rollback, and human-visible status semantics must be designed and independently qualified. No default-on and no production deployment authorised. This is a draft ADR, not an accepted design.
+
+## Owner decision — DR-02 controller/parent/worker separation (DEC-007)
+
+The owner approved **separate protected controller / authenticated parent / restricted worker** as the architecture baseline. The security guarantee must include inability of a malicious same-user unprivileged process to impersonate the authorised parent. Concrete authenticated IPC, OS identity/capability and receipt durability designs require review and native Linux+Windows adversarial testing before use. This does not authorise installation, privileged services, changes to operating-system security policy, trust-mode enablement, production deployment or acceptance of any High/Critical risk.
