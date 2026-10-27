@@ -206,8 +206,8 @@ def test_restart_preserves_consumed_terminal_state_and_rejects_replay(tmp_path):
     assert replay.state is CandidateState.CONSUMED
 
 
-def test_same_user_sqlite_mutation_can_bypass_cas_but_is_not_authority(tmp_path):
-    """Expose the remaining protected-controller gate without treating it as fixed."""
+def test_same_user_sqlite_rewind_is_fenced_by_restart_reconciliation(tmp_path):
+    """A same-user rewind cannot resume a consumed candidate through normal startup."""
     db_path = tmp_path / "candidate.db"
     with CandidateReceiptStore(db_path) as store:
         candidate = _issue(store)
@@ -220,11 +220,14 @@ def test_same_user_sqlite_mutation_can_bypass_cas_but_is_not_authority(tmp_path)
     connection.commit()
     connection.close()
 
-    with CandidateReceiptStore.open_for_live_generation(db_path, generation=7) as reopened:
+    with CandidateReceiptStore(db_path) as reopened:
+        assert reopened.reconcile_required
+        assert reopened.reconcile_after_restart(now=NOW + timedelta(seconds=2)) == 1
         result = reopened.consume(candidate, now=NOW + timedelta(seconds=2))
 
-    assert result.status is CandidateConsumeStatus.CONSUMED
-    # The result remains only a candidate-store transition; no trusted proof exists.
+    assert result.status is CandidateConsumeStatus.INCOMPLETE
+    assert result.reason == "unknown_after_restart_reconciliation"
+    assert result.state is CandidateState.UNKNOWN_INCOMPLETE
 
 
 def test_live_generation_join_rejects_issue_and_consume_from_other_generation(tmp_path):
