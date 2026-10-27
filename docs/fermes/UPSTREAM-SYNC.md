@@ -63,7 +63,7 @@ Do **not** use an unreviewed Hermes updater to advance a patched checkout; the u
 **Still open / not implied by those tests:**
 - They do **not** prove an update to fork main, a production installation, unattended operation or a general release-upgrade procedure.
 - [FHM-005](https://github.com/fredheathcote007/hermes-agent/issues/5) P0 requires independent outcome attestation and native Linux and Windows security qualification.
-- [FHM-006 to FHM-010](https://github.com/fredheathcote007/hermes-agent/issues/6) retain separate compaction integrity, local memory, learning and evaluation acceptance gates.
+- [FHM-006](https://github.com/fredheathcote007/hermes-agent/issues/6), [FHM-007](https://github.com/fredheathcote007/hermes-agent/issues/7), [FHM-008](https://github.com/fredheathcote007/hermes-agent/issues/8), [FHM-009](https://github.com/fredheathcote007/hermes-agent/issues/9) and [FHM-010](https://github.com/fredheathcote007/hermes-agent/issues/10) retain separate compaction integrity, local memory, learning and evaluation acceptance gates.
 - [FHM-017](https://github.com/fredheathcote007/hermes-agent/issues/28) and [FHM-018](https://github.com/fredheathcote007/hermes-agent/issues/29) remain P0 for repeated successful tool loops and late side effects.
 - No FHM-011 controlled release-upgrade exercise or rollback rehearsal has been accepted.
 
