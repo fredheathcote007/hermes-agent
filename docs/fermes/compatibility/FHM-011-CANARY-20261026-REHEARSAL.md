@@ -53,11 +53,12 @@ git -C /srv/project-coordinator/projects/fermes-hermes-fhm011-canary-candidate-2
 git -C /srv/project-coordinator/projects/fermes-hermes-fhm011-canary-candidate-20261027 status --short --branch
 git -C /srv/project-coordinator/projects/fermes-hermes-fhm011-canary-candidate-20261027 rev-parse HEAD
 git cherry 0645e1cafcd1703fdb2a7cb0d6dfa3fe042ac635 765933299d885e850390ed1d8e4fd4d37fae8342 bf0203a794a07aac3ff764972ab9087baa4e4f4e
-python3 scripts/fermes_upstream_compare.py \\
-  --repo /srv/project-coordinator/projects/fermes-hermes-fhm011-canary-candidate-20261027 \\
-  --upstream-base bf0203a794a07aac3ff764972ab9087baa4e4f4e \\
-  --upstream-target 765933299d885e850390ed1d8e4fd4d37fae8342 \\
-  --fork 0645e1cafcd1703fdb2a7cb0d6dfa3fe042ac635 \\
+git rev-list --no-merges --count bf0203a794a07aac3ff764972ab9087baa4e4f4e..765933299d885e850390ed1d8e4fd4d37fae8342
+python3 scripts/fermes_upstream_compare.py \
+  --repo /srv/project-coordinator/projects/fermes-hermes-fhm011-canary-candidate-20261027 \
+  --upstream-base bf0203a794a07aac3ff764972ab9087baa4e4f4e \
+  --upstream-target 765933299d885e850390ed1d8e4fd4d37fae8342 \
+  --fork 0645e1cafcd1703fdb2a7cb0d6dfa3fe042ac635 \
   --format json
 ```
 
@@ -121,8 +122,10 @@ overlap list and the dated [upstream issue/PR crosswalk](UPSTREAM-ISSUE-PR-CROSS
 
 ## Exact-patch deduplication versus semantic unknown
 
-The requested `git cherry` comparison completed successfully with **1,575 distinct non-merge
-commits** and **0 equivalent patch IDs**. That is useful exact-patch evidence only: it found no
+The requested `git cherry` comparison completed successfully with **1,575 commit entries**
+(all marked `+`; **0** patch-equivalent entries marked `-`). A separate
+`git rev-list --no-merges --count` check confirmed the same **1,575 non-merge commits**
+in the pinned baseline-to-canary range (versus 1,591 total commits including merges). That is useful exact-patch evidence only: it found no
 patch-ID matches under that comparison. It does **not** prove that the canary has no semantic
 duplicate of a Fermes change. A patch may be adapted, reordered, split, squashed, or restructured
 and still implement the same behavior. The 12 overlapping paths and the two direct conflicts are

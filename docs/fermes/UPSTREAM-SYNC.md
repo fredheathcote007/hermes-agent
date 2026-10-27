@@ -65,7 +65,7 @@ Do **not** use an unreviewed Hermes updater to advance a patched checkout; the u
 - [FHM-005](https://github.com/fredheathcote007/hermes-agent/issues/5) P0 requires independent outcome attestation and native Linux and Windows security qualification.
 - [FHM-006](https://github.com/fredheathcote007/hermes-agent/issues/6), [FHM-007](https://github.com/fredheathcote007/hermes-agent/issues/7), [FHM-008](https://github.com/fredheathcote007/hermes-agent/issues/8), [FHM-009](https://github.com/fredheathcote007/hermes-agent/issues/9) and [FHM-010](https://github.com/fredheathcote007/hermes-agent/issues/10) retain separate compaction integrity, local memory, learning and evaluation acceptance gates.
 - [FHM-017](https://github.com/fredheathcote007/hermes-agent/issues/28) and [FHM-018](https://github.com/fredheathcote007/hermes-agent/issues/29) remain P0 for repeated successful tool loops and late side effects.
-- No FHM-011 controlled release-upgrade exercise or rollback rehearsal has been accepted.
+- No newer stable-release upgrade or release-adoption qualification has been accepted under FHM-011. The 26 October experimental canary **did** pass an isolated abort/rollback rehearsal, but its merged-candidate compatibility remains **INCONCLUSIVE / not approved**; see the Step 3 report below.
 
 ## Safeguards and follow-up
 
