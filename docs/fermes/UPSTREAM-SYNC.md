@@ -94,6 +94,12 @@ special names. It does not fetch, contact GitHub, call an API, merge, checkout, 
 or write a report or any other output into the repository. Git subprocesses use argv directly,
 closed stdin, timeouts, and bounded output.
 
+The comparison has a shared monotonic 30-second budget and refuses histories over 256 non-merge
+commits. Patch-ID input/output is streamed through bounded pipes and is killed and reaped on timeout.
+Report path, change, and equivalent-pair evidence is deterministically capped at 256 items with
+totals and truncation warnings; the rendered JSON or Markdown is capped at 1 MiB and fails closed
+if that limit is still exceeded.
+
 The report includes resolved commit SHAs, Git descriptions, changed paths and counts, Git
 `patch-id --stable` equivalence evidence, path overlap, deterministic risk-review hints, warnings,
 and a confidence status. Classifications are `exact-equivalent`, `possible-overlap-by-path`,
@@ -101,6 +107,8 @@ and a confidence status. Classifications are `exact-equivalent`, `possible-overl
 report has `review_required: true` and `compatibility_status: not-established`. High-risk path
 categories (agent execution, tools, memory, tests, CI, security, and dependencies) are hints for
 human review only; the tool cannot approve a release, establish safety, or authorize deployment.
+For `exact-equivalent`, the confidence label is `patch-only`: matching patch IDs do not establish
+compatibility, release readiness, or deployment safety.
 
 Limitations: local Git must already contain every supplied ref; no network recovery is attempted.
 Patch IDs do not replace review of semantics, dependencies, migrations, security, tests, or runtime

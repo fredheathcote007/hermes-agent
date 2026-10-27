@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,12 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "fermes_upstream_compare.py"
 OFFICIAL_URL = "https://github.com/NousResearch/hermes-agent.git"
 FORK_URL = "https://github.com/fredheathcote007/hermes-agent.git"
+MODULE_NAME = "fermes_upstream_compare_test_module"
+MODULE_SPEC = importlib.util.spec_from_file_location(MODULE_NAME, SCRIPT)
+assert MODULE_SPEC is not None and MODULE_SPEC.loader is not None
+COMPARE_TOOL = importlib.util.module_from_spec(MODULE_SPEC)
+sys.modules[MODULE_NAME] = COMPARE_TOOL
+MODULE_SPEC.loader.exec_module(COMPARE_TOOL)
 
 
 def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -112,11 +120,13 @@ def test_exact_equivalent_patch_uses_patch_id_not_commit_sha(tmp_path: Path) -> 
     markdown = run_compare(repo, base, upstream, fork, output_format="markdown")
 
     assert data["comparison"]["classification"] == "exact-equivalent"
+    assert data["comparison"]["confidence_status"] == "patch-only"
     assert data["comparison"]["equivalent_patch_pairs"]
     assert upstream != fork
     assert markdown.returncode == 0
     assert "# Fermes upstream comparison" in markdown.stdout
     assert "`exact-equivalent`" in markdown.stdout
+    assert "patch-only; not deploy safety" in markdown.stdout
 
 
 def test_overlapping_different_patch_requires_review(tmp_path: Path) -> None:
@@ -191,29 +201,12 @@ def test_dirty_checkout_and_read_only_determinism(tmp_path: Path) -> None:
     assert json.loads(dirty.stdout)["error"]["code"] == "dirty_worktree"
 
 
-def test_real_pinned_history_is_conservative(tmp_path: Path) -> None:
-    fork_commit = git(
-        ROOT, "rev-parse", "fermes/qwen-lmstudio-v0225-20261026"
-    ).stdout.strip()
-    worktree = tmp_path / "real-history"
-    worktree.mkdir()
-    base = "bf0203a794a07aac3ff764972ab9087baa4e4f4e"
-    subprocess.run(
-        ["git", "-C", str(worktree), "init", "-b", "main"],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=30,
+def test_pinned_history_fixture_is_conservative(tmp_path: Path) -> None:
+    repo, base, _upstream, fork = make_repository(
+        tmp_path, "upstream.txt", "upstream\n", "fork.txt", "fork\n"
     )
-    git(worktree, "remote", "add", "official", OFFICIAL_URL)
-    git(worktree, "remote", "add", "maintained", FORK_URL)
-    git(worktree, "fetch", "--depth=10000", str(ROOT), base, fork_commit)
-    git(worktree, "update-ref", "refs/heads/base", base)
-    git(worktree, "update-ref", "refs/heads/fork", fork_commit)
-    git(worktree, "update-ref", "refs/tags/v0.22.5", base)
-    git(worktree, "switch", "--detach", base)
-    result = run_compare(worktree, base, "v0.22.5", fork_commit)
+    git(repo, "tag", "v0.22.5", base)
+    result = run_compare(repo, base, "v0.22.5", fork)
     data = report(result)
 
     assert (
@@ -223,3 +216,134 @@ def test_real_pinned_history_is_conservative(tmp_path: Path) -> None:
     assert data["refs"]["upstream_target"]["version"].startswith("v0.22.5")
     assert data["comparison"]["review_required"] is True
     assert data["comparison"]["compatibility_status"] == "not-established"
+
+
+def test_non_ancestor_fails_closed(tmp_path: Path) -> None:
+    repo, _base, upstream, fork = make_repository(
+        tmp_path, "one.txt", "one\n", "two.txt", "two\n"
+    )
+    result = run_compare(repo, upstream, fork, fork)
+
+    assert result.returncode != 0
+    assert json.loads(result.stdout)["error"]["code"] == "ref_relationship"
+
+
+def test_missing_patch_id_is_not_classified_as_equivalent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, upstream, fork = make_repository(
+        tmp_path, "shared.txt", "upstream\n", "shared.txt", "fork\n"
+    )
+    monkeypatch.setattr(
+        COMPARE_TOOL, "_aggregate_patch_id", lambda *args, **kwargs: None
+    )
+
+    data = COMPARE_TOOL.compare(repo, base, upstream, fork)
+
+    assert data["comparison"]["classification"] == "unknown/non-equivalent"
+    assert data["comparison"]["confidence_status"] == "low"
+
+
+def test_commit_history_has_a_real_count_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commits = [f"{index:040x}" for index in range(COMPARE_TOOL.MAX_COMMIT_COUNT + 1)]
+    calls: list[list[str]] = []
+
+    def fake_git(_repo: Path, args: list[str], **_kwargs: object) -> bytes:
+        calls.append(args)
+        return ("\n".join(commits) + "\n").encode()
+
+    monkeypatch.setattr(COMPARE_TOOL, "_git", fake_git)
+
+    with pytest.raises(COMPARE_TOOL.CompareError, match="comparison bound") as error:
+        COMPARE_TOOL._commit_patch_ids(tmp_path, "base", "target")
+
+    assert error.value.code == "commit_bound"
+    assert len(calls) == 1
+
+
+def test_commit_history_budget_is_monotonic_and_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def fake_git(_repo: Path, _args: list[str], **_kwargs: object) -> bytes:
+        nonlocal calls
+        calls += 1
+        return b"0" * 40 + b"\n"
+
+    monkeypatch.setattr(COMPARE_TOOL, "_git", fake_git)
+    budget = COMPARE_TOOL.ComparisonBudget(time.monotonic() - 1)
+
+    with pytest.raises(COMPARE_TOOL.CompareError) as error:
+        COMPARE_TOOL._commit_patch_ids(tmp_path, "base", "target", budget=budget)
+
+    assert error.value.code == "comparison_timeout"
+    assert calls == 0
+
+
+def test_patch_id_rejects_stream_output_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_runner(*_args: object, **_kwargs: object) -> object:
+        return COMPARE_TOOL.GitResult(0, b"", b"", truncated=True)
+
+    monkeypatch.setattr(COMPARE_TOOL, "_run_git_bounded", fake_runner)
+
+    with pytest.raises(COMPARE_TOOL.CompareError, match="output bound") as error:
+        COMPARE_TOOL._patch_id(tmp_path, b"patch\n")
+
+    assert error.value.code == "bounded_output"
+
+
+def test_bounded_git_streams_input_and_caps_output(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-b", "main")
+    result = COMPARE_TOOL._run_git_bounded(
+        tmp_path,
+        ["cat-file", "--batch"],
+        input_data=b"missing-object\n" * 128,
+        max_output=128,
+    )
+
+    assert result.truncated is True
+    assert len(result.stdout) + len(result.stderr) <= 128
+
+
+def test_report_path_lists_are_bounded_and_annotated(tmp_path: Path) -> None:
+    repo, base, upstream, fork = make_repository(
+        tmp_path, "one.txt", "one\n", "two.txt", "two\n"
+    )
+    git(repo, "switch", "--detach", upstream)
+    for index in range(COMPARE_TOOL.MAX_REPORT_ITEMS + 10):
+        path = repo / "upstream" / f"file-{index:03d}.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{index}\n", encoding="utf-8")
+    large_upstream = commit(repo, "many upstream files")
+    git(repo, "switch", "--detach", base)
+
+    data = report(run_compare(repo, base, large_upstream, fork))
+    comparison = data["comparison"]
+
+    assert comparison["upstream"]["changed_paths_truncated"] is True
+    assert len(comparison["upstream"]["changed_paths"]) == COMPARE_TOOL.MAX_REPORT_ITEMS
+    assert (
+        len(data["comparison"]["upstream"]["changes"]) == COMPARE_TOOL.MAX_REPORT_ITEMS
+    )
+    assert len(json.dumps(data).encode()) <= COMPARE_TOOL.MAX_REPORT_BYTES
+    assert any(
+        "upstream changed_paths truncated" in warning for warning in data["warnings"]
+    )
+
+
+def test_equivalent_patch_pairs_are_deterministically_truncated() -> None:
+    upstream = {f"{index:040x}": "same" for index in range(32)}
+    fork = {f"{index + 100:040x}": "same" for index in range(32)}
+
+    pairs, total, truncated = COMPARE_TOOL._equivalent_patch_pairs(upstream, fork)
+
+    assert len(pairs) == COMPARE_TOOL.MAX_EQUIVALENT_PATCH_PAIRS
+    assert total == 32 * 32
+    assert truncated is True
+    assert pairs[0]["upstream_commit"] == "0" * 40
+    assert pairs[0]["fork_commit"] == f"{100:040x}"
