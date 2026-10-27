@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import subprocess
@@ -76,7 +77,13 @@ def make_repository(
 
 
 def run_compare(
-    repo: Path, base: str, target: str, fork: str, *, output_format: str = "json"
+    repo: Path,
+    base: str,
+    target: str,
+    fork: str,
+    *,
+    output_format: str = "json",
+    mode: str = "full",
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -92,6 +99,8 @@ def run_compare(
             fork,
             "--format",
             output_format,
+            "--mode",
+            mode,
         ],
         cwd=ROOT,
         stdin=subprocess.DEVNULL,
@@ -347,3 +356,195 @@ def test_equivalent_patch_pairs_are_deterministically_truncated() -> None:
     assert truncated is True
     assert pairs[0]["upstream_commit"] == "0" * 40
     assert pairs[0]["fork_commit"] == f"{100:040x}"
+
+
+def test_overview_skips_patch_enumeration_and_reports_static_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, upstream, fork = make_repository(
+        tmp_path, "agent/changed.py", "upstream\n", "tools/fork.py", "fork\n"
+    )
+    monkeypatch.setattr(
+        COMPARE_TOOL,
+        "_aggregate_patch_id",
+        lambda *_args, **_kwargs: pytest.fail("overview must not aggregate patches"),
+    )
+    monkeypatch.setattr(
+        COMPARE_TOOL,
+        "_commit_patch_ids",
+        lambda *_args, **_kwargs: pytest.fail("overview must not enumerate patch IDs"),
+    )
+
+    data = report(run_compare(repo, base, upstream, fork, mode="overview"))
+
+    assert data["schema_version"] == COMPARE_TOOL.SCHEMA_VERSION
+    assert data["mode"] == "overview"
+    assert data["refs"]["upstream_target"]["commit"] == upstream
+    assert data["refs"]["fork"]["commit"] == fork
+    assert (
+        data["remotes"]["official_upstream"][0]["identity"]
+        == COMPARE_TOOL.OFFICIAL_IDENTITY
+    )
+    comparison = data["comparison"]
+    assert comparison["confidence_status"] == "static-overlap-only"
+    assert comparison["patch_equivalence"] == "not-evaluated"
+    assert comparison["merge_conflict_status"] == "not-tested"
+    assert comparison["review_required"] is True
+    assert comparison["compatibility_status"] == "not-established"
+    assert data["risk_hints"]["agent_execution"] == ["agent/changed.py"]
+    assert data["risk_hints"]["tool_use"] == ["tools/fork.py"]
+
+
+def test_overview_large_history_succeeds_but_full_refuses_bound(tmp_path: Path) -> None:
+    repo, base, upstream, fork = make_repository(
+        tmp_path, "upstream.txt", "start\n", "fork.txt", "fork\n"
+    )
+    git(repo, "switch", "--detach", upstream)
+    for index in range(COMPARE_TOOL.MAX_COMMIT_COUNT):
+        git(repo, "commit", "--allow-empty", "-m", f"history {index}")
+    large_target = git(repo, "rev-parse", "HEAD").stdout.strip()
+    git(repo, "switch", "--detach", base)
+
+    overview = report(run_compare(repo, base, large_target, fork, mode="overview"))
+    assert overview["comparison"]["upstream"]["counts"]["non_merge_commits"] == 257
+
+    full = run_compare(repo, base, large_target, fork)
+    assert full.returncode != 0
+    full_error = json.loads(full.stdout)["error"]
+    assert full_error["code"] == "commit_bound"
+    assert full_error["stage"] == "full-upstream-commit-patch-ids"
+
+
+def test_overview_avoids_large_binary_delta_that_full_rejects(tmp_path: Path) -> None:
+    repo, base, upstream, fork = make_repository(
+        tmp_path, "large.bin", "small\n", "fork.txt", "fork\n"
+    )
+    git(repo, "switch", "--detach", upstream)
+    payload = hashlib.shake_256(b"fhm011-large-binary").digest(5 * 1024 * 1024)
+    (repo / "large.bin").write_bytes(payload)
+    large_target = commit(repo, "large binary delta")
+    git(repo, "switch", "--detach", base)
+
+    overview = report(run_compare(repo, base, large_target, fork, mode="overview"))
+    assert overview["comparison"]["upstream"]["total_paths"] == 1
+    assert overview["comparison"]["upstream"]["counts"]["files_changed"] == 1
+
+    full = run_compare(repo, base, large_target, fork)
+    assert full.returncode != 0
+    assert json.loads(full.stdout)["error"]["code"] == "bounded_output"
+
+
+def test_overview_preserves_rename_and_non_utf8_paths(tmp_path: Path) -> None:
+    old_path = os.fsdecode(b"agent/old-\xff.py")
+    new_path = os.fsdecode(b"agent/new-\xfe.py")
+    repo, original_base, _upstream, _fork = make_repository(
+        tmp_path, old_path, "agent\n", "tools/fork.py", "fork\n"
+    )
+    git(repo, "switch", "--detach", original_base)
+    (repo / old_path).parent.mkdir(parents=True, exist_ok=True)
+    (repo / old_path).write_text("agent\n", encoding="utf-8")
+    base = commit(repo, "rename base file")
+    git(repo, "switch", "-c", "upstream-renamed", base)
+    git(repo, "mv", old_path, new_path)
+    renamed = commit(repo, "rename non-utf8 path")
+    git(repo, "switch", "-c", "fork-renamed", base)
+    (repo / "tools" / "fork.py").parent.mkdir(parents=True, exist_ok=True)
+    (repo / "tools" / "fork.py").write_text("fork\n", encoding="utf-8")
+    renamed_fork = commit(repo, "fork high risk path")
+    git(repo, "switch", "--detach", base)
+
+    data = report(run_compare(repo, base, renamed, renamed_fork, mode="overview"))
+    changes = data["comparison"]["upstream"]["changes"]
+    assert changes[0]["status"].startswith("R")
+    assert changes[0]["paths"] == [old_path, new_path]
+    markdown = run_compare(
+        repo,
+        base,
+        renamed,
+        renamed_fork,
+        mode="overview",
+        output_format="markdown",
+    )
+    assert markdown.returncode == 0
+    assert "Change samples" in markdown.stdout
+
+
+def test_overview_path_report_is_deterministically_truncated_in_both_formats(
+    tmp_path: Path,
+) -> None:
+    repo, base, upstream, fork = make_repository(
+        tmp_path, "upstream/seed.txt", "seed\n", "fork.txt", "fork\n"
+    )
+    git(repo, "switch", "--detach", upstream)
+    for index in range(COMPARE_TOOL.MAX_REPORT_ITEMS + 17):
+        path = repo / "upstream" / f"file-{index:03d}.txt"
+        path.write_text(f"{index}\n", encoding="utf-8")
+    large_target = commit(repo, "many overview paths")
+    git(repo, "switch", "--detach", base)
+
+    first = run_compare(repo, base, large_target, fork, mode="overview")
+    second = run_compare(repo, base, large_target, fork, mode="overview")
+    assert first.stdout == second.stdout
+    data = report(first)
+    upstream = data["comparison"]["upstream"]
+    assert upstream["total_paths"] == COMPARE_TOOL.MAX_REPORT_ITEMS + 18
+    assert len(upstream["changed_paths"]) == COMPARE_TOOL.MAX_REPORT_ITEMS
+    assert upstream["changed_paths_truncated"] is True
+    assert any(
+        "upstream changed_paths truncated" in warning for warning in data["warnings"]
+    )
+
+    first_markdown = run_compare(
+        repo, base, large_target, fork, mode="overview", output_format="markdown"
+    )
+    second_markdown = run_compare(
+        repo, base, large_target, fork, mode="overview", output_format="markdown"
+    )
+    assert first_markdown.returncode == 0
+    assert first_markdown.stdout == second_markdown.stdout
+    assert "static-overlap-only" in first_markdown.stdout
+
+
+@pytest.mark.parametrize("bad_mode", ["overview"])
+def test_overview_bad_ref_remote_and_dirty_fail_closed(
+    tmp_path: Path, bad_mode: str
+) -> None:
+    repo, base, upstream, fork = make_repository(
+        tmp_path, "one.txt", "one\n", "two.txt", "two\n"
+    )
+    bad_ref = run_compare(repo, base, "does-not-exist", fork, mode=bad_mode)
+    assert bad_ref.returncode != 0
+    bad_ref_error = json.loads(bad_ref.stdout)["error"]
+    assert bad_ref_error["code"] == "ref"
+    assert bad_ref_error["stage"] == "resolve-upstream-target"
+
+    git(
+        repo,
+        "remote",
+        "set-url",
+        "official",
+        "https://github.com/attacker/hermes-agent.git",
+    )
+    bad_remote = run_compare(repo, base, upstream, fork, mode=bad_mode)
+    assert bad_remote.returncode != 0
+    assert json.loads(bad_remote.stdout)["error"]["stage"] == "verify-remotes"
+
+    git(repo, "remote", "set-url", "official", OFFICIAL_URL)
+    (repo / "base.txt").write_text("dirty\n", encoding="utf-8")
+    dirty = run_compare(repo, base, upstream, fork, mode=bad_mode)
+    assert dirty.returncode != 0
+    dirty_error = json.loads(dirty.stdout)["error"]
+    assert dirty_error["code"] == "dirty_worktree"
+    assert dirty_error["stage"] == "verify-worktree"
+
+
+def test_parse_name_status_rejects_malformed_records() -> None:
+    cases = (
+        (b"M\x00file.txt", "unterminated"),
+        (b"M\x00file.txt\x00\x00D\x00another.txt\x00", "empty change status"),
+        (b"R100\x00old.txt\x00", "malformed rename"),
+        (b"\xff\x00file.txt\x00", "non-ASCII change status"),
+    )
+    for raw, error in cases:
+        with pytest.raises(COMPARE_TOOL.CompareError, match=error):
+            COMPARE_TOOL._parse_name_status(raw)

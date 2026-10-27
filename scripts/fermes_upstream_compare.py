@@ -17,6 +17,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, TypeVar
 from urllib.parse import urlparse
 
 
@@ -32,14 +33,16 @@ MAX_REPORT_ITEMS = 256
 MAX_REPORT_BYTES = 1024 * 1024
 OFFICIAL_IDENTITY = "github.com/nousresearch/hermes-agent"
 FORK_IDENTITY = "github.com/fredheathcote007/hermes-agent"
+T = TypeVar("T")
 
 
 class CompareError(RuntimeError):
     """A fail-closed comparison error."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, stage: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.stage = stage
 
 
 @dataclass(frozen=True)
@@ -223,6 +226,37 @@ def _text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _path_text(data: bytes) -> str:
+    """Decode a Git path without losing bytes that are not UTF-8."""
+
+    return data.decode("utf-8", errors="surrogateescape")
+
+
+def _path_sort_key(path: str) -> bytes:
+    return os.fsencode(path)
+
+
+def _markdown_path(path: str) -> str:
+    """Make arbitrary Git path bytes printable without raising on stdout."""
+
+    return (
+        path.encode("utf-8", errors="backslashreplace")
+        .decode("ascii")
+        .replace("`", "\\`")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+
+
+def _stage(stage: str, operation: Callable[[], T]) -> T:
+    try:
+        return operation()
+    except CompareError as exc:
+        if exc.stage is None:
+            exc.stage = stage
+        raise
+
+
 def _require_ok(result: GitResult, action: str) -> bytes:
     if result.timed_out:
         raise CompareError("git_timeout", f"Git {action} exceeded the timeout")
@@ -347,11 +381,22 @@ def _resolve_ref(
 ) -> dict[str, str]:
     if not value.strip():
         raise CompareError("ref", f"{label} ref is empty")
-    resolved = _git(
-        repo,
-        ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{value}^{{commit}}"],
-        budget=budget,
-    )
+    try:
+        resolved = _git(
+            repo,
+            [
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                f"{value}^{{commit}}",
+            ],
+            budget=budget,
+        )
+    except CompareError as exc:
+        if exc.code != "git_data":
+            raise
+        raise CompareError("ref", f"{label} did not resolve to a commit") from exc
     commit = _text(resolved).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise CompareError("ref", f"{label} did not resolve to a commit")
@@ -395,20 +440,35 @@ def _is_ancestor(
 
 
 def _parse_name_status(raw: bytes) -> list[dict[str, object]]:
-    fields = _text(raw).split("\x00")
+    if not raw:
+        return []
+    if not raw.endswith(b"\x00"):
+        raise CompareError("git_data", "Git returned unterminated name-status output")
+    fields = raw[:-1].split(b"\x00")
     entries: list[dict[str, object]] = []
     index = 0
-    while index < len(fields) and fields[index]:
-        status = fields[index]
+    while index < len(fields):
+        if not fields[index]:
+            raise CompareError("git_data", "Git returned an empty change status")
+        try:
+            status = fields[index].decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise CompareError(
+                "git_data", "Git returned a non-ASCII change status"
+            ) from exc
         index += 1
         if index >= len(fields):
             raise CompareError("git_data", "Git returned malformed name-status output")
-        paths = [fields[index]]
+        if not fields[index]:
+            raise CompareError("git_data", "Git returned an empty changed path")
+        paths = [_path_text(fields[index])]
         index += 1
         if status[:1] in {"R", "C"}:
             if index >= len(fields):
                 raise CompareError("git_data", "Git returned malformed rename output")
-            paths.append(fields[index])
+            if not fields[index]:
+                raise CompareError("git_data", "Git returned an empty rename path")
+            paths.append(_path_text(fields[index]))
             index += 1
         entries.append({"status": status, "paths": paths})
     return entries
@@ -443,12 +503,73 @@ def _change_summary(
         )
     )
     stats = _shortstat(_git(repo, ["diff", "--shortstat", older, newer], budget=budget))
-    paths = sorted({path for entry in entries for path in entry["paths"]})
+    paths = sorted(
+        {path for entry in entries for path in entry["paths"]}, key=_path_sort_key
+    )
     stats["files_changed"] = len(entries)
     return {
         "counts": stats,
         "changed_paths": paths,
-        "changes": sorted(entries, key=lambda item: tuple(item["paths"])),
+        "changes": sorted(
+            entries,
+            key=lambda item: tuple(_path_sort_key(path) for path in item["paths"]),
+        ),
+    }
+
+
+def _overview_change_summary(
+    repo: Path,
+    older: str,
+    newer: str,
+    *,
+    budget: ComparisonBudget | None = None,
+) -> dict[str, object]:
+    """Collect bounded structural change data without reading patch content."""
+
+    entries = _parse_name_status(
+        _git(
+            repo,
+            [
+                "diff",
+                "--name-status",
+                "-z",
+                "--find-renames=50%",
+                "--no-ext-diff",
+                "--no-textconv",
+                older,
+                newer,
+            ],
+            budget=budget,
+        )
+    )
+    stats = _shortstat(
+        _git(
+            repo,
+            ["diff", "--shortstat", "--no-ext-diff", "--no-textconv", older, newer],
+            budget=budget,
+        )
+    )
+    count_raw = _git(
+        repo,
+        ["rev-list", "--count", "--no-merges", f"{older}..{newer}"],
+        budget=budget,
+    )
+    count_text = _text(count_raw).strip()
+    if not re.fullmatch(r"\d+", count_text):
+        raise CompareError("git_data", "Git returned an invalid non-merge commit count")
+    paths = sorted(
+        {path for entry in entries for path in entry["paths"]}, key=_path_sort_key
+    )
+    stats["files_changed"] = len(entries)
+    stats["non_merge_commits"] = int(count_text)
+    return {
+        "counts": stats,
+        "total_paths": len(paths),
+        "changed_paths": paths,
+        "changes": sorted(
+            entries,
+            key=lambda item: tuple(_path_sort_key(path) for path in item["paths"]),
+        ),
     }
 
 
@@ -627,41 +748,171 @@ def _equivalent_patch_pairs(
     return pairs, total, total > MAX_EQUIVALENT_PATCH_PAIRS
 
 
-def compare(
-    repo: Path, upstream_base: str, upstream_target: str, fork: str
+def _overview_report(
+    repo: Path,
+    worktree_head: str,
+    remotes: dict[str, object],
+    base: dict[str, str],
+    target: dict[str, str],
+    fork_ref: dict[str, str],
+    *,
+    budget: ComparisonBudget,
 ) -> dict[str, object]:
-    budget = ComparisonBudget.start()
-    worktree_head = _verify_worktree(repo, budget=budget)
-    remotes = _verify_remotes(repo, budget=budget)
-    base = _resolve_ref(repo, "upstream-base", upstream_base, budget=budget)
-    target = _resolve_ref(repo, "upstream-target", upstream_target, budget=budget)
-    fork_ref = _resolve_ref(repo, "fork", fork, budget=budget)
-    if not _is_ancestor(repo, base["commit"], target["commit"], budget=budget):
-        raise CompareError(
-            "ref_relationship", "upstream-base is not an ancestor of upstream-target"
+    upstream_changes = _stage(
+        "overview-upstream-diff",
+        lambda: _overview_change_summary(
+            repo, base["commit"], target["commit"], budget=budget
+        ),
+    )
+    fork_changes = _stage(
+        "overview-fork-diff",
+        lambda: _overview_change_summary(
+            repo, base["commit"], fork_ref["commit"], budget=budget
+        ),
+    )
+    upstream_paths = set(upstream_changes["changed_paths"])
+    fork_paths = set(fork_changes["changed_paths"])
+    overlap = sorted(upstream_paths & fork_paths, key=_path_sort_key)
+    all_paths = sorted(upstream_paths | fork_paths, key=_path_sort_key)
+    warnings: list[str] = []
+    _bound_change_summary(upstream_changes, "upstream", warnings)
+    _bound_change_summary(fork_changes, "fork", warnings)
+    overlap_visible, overlap_truncated = _bounded_items(overlap)
+    if overlap_truncated:
+        warnings.append(
+            f"path_overlap truncated to {MAX_REPORT_ITEMS} items in the report."
         )
-    if not _is_ancestor(repo, base["commit"], fork_ref["commit"], budget=budget):
+    risk_hints = _risk_hints(all_paths)
+    for category, paths in risk_hints.items():
+        visible, truncated = _bounded_items(paths)
+        risk_hints[category] = visible
+        if truncated:
+            warnings.append(
+                f"risk hint {category} truncated to {MAX_REPORT_ITEMS} items in the report."
+            )
+    warnings.append(
+        "Overview is static path-overlap triage only; compatibility and adoption safety are not established."
+    )
+    if not overlap:
+        warnings.append(
+            "No path overlap was observed; that is not evidence of compatibility or safety."
+        )
+    return {
+        "tool": TOOL_NAME,
+        "schema_version": SCHEMA_VERSION,
+        "mode": "overview",
+        "status": "ok",
+        "repository": str(repo),
+        "worktree_head": worktree_head,
+        "remotes": remotes,
+        "refs": {"upstream_base": base, "upstream_target": target, "fork": fork_ref},
+        "comparison": {
+            "classification": "possible-overlap-by-path" if overlap else "no-overlap",
+            "confidence_status": "static-overlap-only",
+            "compatibility_status": "not-established",
+            "review_required": True,
+            "patch_equivalence": "not-evaluated",
+            "merge_conflict_status": "not-tested",
+            "path_overlap": overlap_visible,
+            "path_overlap_total": len(overlap),
+            "path_overlap_truncated": overlap_truncated,
+            "upstream": upstream_changes,
+            "fork": fork_changes,
+        },
+        "risk_hints": risk_hints,
+        "warnings": sorted(set(warnings)),
+    }
+
+
+def compare(
+    repo: Path,
+    upstream_base: str,
+    upstream_target: str,
+    fork: str,
+    *,
+    mode: str = "full",
+) -> dict[str, object]:
+    if mode not in {"full", "overview"}:
+        raise CompareError("mode", f"unsupported comparison mode: {mode}")
+    budget = ComparisonBudget.start()
+    worktree_head = _stage(
+        "verify-worktree", lambda: _verify_worktree(repo, budget=budget)
+    )
+    remotes = _stage("verify-remotes", lambda: _verify_remotes(repo, budget=budget))
+    base = _stage(
+        "resolve-upstream-base",
+        lambda: _resolve_ref(repo, "upstream-base", upstream_base, budget=budget),
+    )
+    target = _stage(
+        "resolve-upstream-target",
+        lambda: _resolve_ref(repo, "upstream-target", upstream_target, budget=budget),
+    )
+    fork_ref = _stage(
+        "resolve-fork", lambda: _resolve_ref(repo, "fork", fork, budget=budget)
+    )
+    if not _stage(
+        "verify-upstream-target-ancestry",
+        lambda: _is_ancestor(repo, base["commit"], target["commit"], budget=budget),
+    ):
         raise CompareError(
-            "ref_relationship", "upstream-base is not an ancestor of fork"
+            "ref_relationship",
+            "upstream-base is not an ancestor of upstream-target",
+            stage="verify-upstream-target-ancestry",
+        )
+    if not _stage(
+        "verify-fork-ancestry",
+        lambda: _is_ancestor(repo, base["commit"], fork_ref["commit"], budget=budget),
+    ):
+        raise CompareError(
+            "ref_relationship",
+            "upstream-base is not an ancestor of fork",
+            stage="verify-fork-ancestry",
         )
 
-    upstream_changes = _change_summary(
-        repo, base["commit"], target["commit"], budget=budget
+    if mode == "overview":
+        return _overview_report(
+            repo,
+            worktree_head,
+            remotes,
+            base,
+            target,
+            fork_ref,
+            budget=budget,
+        )
+
+    upstream_changes = _stage(
+        "full-upstream-diff",
+        lambda: _change_summary(repo, base["commit"], target["commit"], budget=budget),
     )
-    fork_changes = _change_summary(
-        repo, base["commit"], fork_ref["commit"], budget=budget
+    fork_changes = _stage(
+        "full-fork-diff",
+        lambda: _change_summary(
+            repo, base["commit"], fork_ref["commit"], budget=budget
+        ),
     )
-    upstream_patch = _aggregate_patch_id(
-        repo, base["commit"], target["commit"], budget=budget
+    upstream_patch = _stage(
+        "full-upstream-patch-id",
+        lambda: _aggregate_patch_id(
+            repo, base["commit"], target["commit"], budget=budget
+        ),
     )
-    fork_patch = _aggregate_patch_id(
-        repo, base["commit"], fork_ref["commit"], budget=budget
+    fork_patch = _stage(
+        "full-fork-patch-id",
+        lambda: _aggregate_patch_id(
+            repo, base["commit"], fork_ref["commit"], budget=budget
+        ),
     )
-    upstream_commits = _commit_patch_ids(
-        repo, base["commit"], target["commit"], budget=budget
+    upstream_commits = _stage(
+        "full-upstream-commit-patch-ids",
+        lambda: _commit_patch_ids(
+            repo, base["commit"], target["commit"], budget=budget
+        ),
     )
-    fork_commits = _commit_patch_ids(
-        repo, base["commit"], fork_ref["commit"], budget=budget
+    fork_commits = _stage(
+        "full-fork-commit-patch-ids",
+        lambda: _commit_patch_ids(
+            repo, base["commit"], fork_ref["commit"], budget=budget
+        ),
     )
     upstream_paths = set(upstream_changes["changed_paths"])
     fork_paths = set(fork_changes["changed_paths"])
@@ -723,6 +974,7 @@ def compare(
     return {
         "tool": TOOL_NAME,
         "schema_version": SCHEMA_VERSION,
+        "mode": "full",
         "status": "ok",
         "repository": str(repo),
         "worktree_head": worktree_head,
@@ -751,23 +1003,46 @@ def compare(
 def _markdown(report: dict[str, object]) -> str:
     if report.get("status") != "ok":
         error = report["error"]
-        return f"# Fermes upstream comparison\n\n**Status:** ERROR  \n**Code:** `{error['code']}`  \n**Message:** {error['message']}\n"
+        mode = report.get("mode", "full")
+        return (
+            "# Fermes upstream comparison\n\n"
+            f"**Schema version:** `{report['schema_version']}`  \n"
+            f"**Mode:** `{mode}`  \n"
+            "**Status:** ERROR  \n"
+            f"**Stage:** `{error.get('stage', 'unknown')}`  \n"
+            f"**Code:** `{error['code']}`  \n"
+            f"**Message:** {error['message']}\n"
+        )
     refs = report["refs"]
     comparison = report["comparison"]
+    mode = report["mode"]
     confidence_detail = (
-        "patch-only; not deploy safety"
-        if comparison["classification"] == "exact-equivalent"
-        else "review confidence only"
+        "static path-overlap triage only"
+        if mode == "overview"
+        else (
+            "patch-only; not deploy safety"
+            if comparison["classification"] == "exact-equivalent"
+            else "review confidence only"
+        )
     )
     lines = [
         "# Fermes upstream comparison",
         "",
+        f"**Schema version:** `{report['schema_version']}`  ",
+        f"**Mode:** `{mode}`  ",
         "**Status:** OK  ",
         f"**Repository:** `{report['repository']}`  ",
         f"**Classification:** `{comparison['classification']}`  ",
         f"**Confidence:** `{comparison['confidence_status']}` ({confidence_detail})  ",
         "**Review required:** YES  ",
         "**Compatibility/adoption:** not established",
+        f"**Patch equivalence:** {comparison.get('patch_equivalence', 'evaluated in full mode')}  ",
+        f"**Merge conflicts:** {comparison.get('merge_conflict_status', 'not reported in full mode')}",
+        "",
+        "## Canonical repository identities",
+        "",
+        f"- **Official upstream:** `{OFFICIAL_IDENTITY}`",
+        f"- **Maintained fork:** `{FORK_IDENTITY}`",
         "",
         "## Refs",
         "",
@@ -779,33 +1054,59 @@ def _markdown(report: dict[str, object]) -> str:
         lines.append(
             f"| {role} | `{ref['input']}` | `{ref['commit']}` | `{ref['version']}` |"
         )
-    lines += [
-        "",
-        "## Changed paths",
-        "",
-        "| Side | Files | Insertions | Deletions |",
-        "| --- | ---: | ---: | ---: |",
-    ]
+    if mode == "overview":
+        lines += [
+            "",
+            "## Changed paths",
+            "",
+            "| Side | Files | Paths | Non-merge commits | Insertions | Deletions |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    else:
+        lines += [
+            "",
+            "## Changed paths",
+            "",
+            "| Side | Files | Insertions | Deletions |",
+            "| --- | ---: | ---: | ---: |",
+        ]
     for side in ("upstream", "fork"):
         counts = comparison[side]["counts"]
-        lines.append(
-            f"| {side} | {counts['files_changed']} | {counts['insertions']} | {counts['deletions']} |"
-        )
+        if mode == "overview":
+            lines.append(
+                f"| {side} | {counts['files_changed']} | "
+                f"{comparison[side]['total_paths']} | {counts['non_merge_commits']} | "
+                f"{counts['insertions']} | {counts['deletions']} |"
+            )
+        else:
+            lines.append(
+                f"| {side} | {counts['files_changed']} | {counts['insertions']} | {counts['deletions']} |"
+            )
     lines += ["", "### Path lists", ""]
     for side in ("upstream", "fork"):
         paths = comparison[side]["changed_paths"]
         lines.append(
-            f"- **{side}:** {', '.join(f'`{path}`' for path in paths) if paths else '(none)'}"
+            f"- **{side}:** "
+            f"{', '.join(f'`{_markdown_path(path)}`' for path in paths) if paths else '(none)'}"
         )
+    if mode == "overview":
+        lines += ["", "### Change samples", ""]
+        for side in ("upstream", "fork"):
+            changes = comparison[side]["changes"]
+            for change in changes:
+                paths = " → ".join(
+                    f"`{_markdown_path(path)}`" for path in change["paths"]
+                )
+                lines.append(f"- **{side} {change['status']}:** {paths}")
     lines += [
-        f"- **Overlap:** {', '.join(f'`{path}`' for path in comparison['path_overlap']) if comparison['path_overlap'] else '(none)'}",
+        f"- **Overlap:** {', '.join(f'`{_markdown_path(path)}`' for path in comparison['path_overlap']) if comparison['path_overlap'] else '(none)'}",
         "",
         "## Risk review hints",
         "",
     ]
     hints = report["risk_hints"]
     lines.extend(
-        f"- **{category}:** {', '.join(f'`{path}`' for path in paths)}"
+        f"- **{category}:** {', '.join(f'`{_markdown_path(path)}`' for path in paths)}"
         for category, paths in hints.items()
     )
     if not hints:
@@ -846,6 +1147,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--fork", required=True, help="verified local maintained-fork SHA or ref"
     )
+    parser.add_argument(
+        "--mode",
+        choices=("full", "overview"),
+        default="full",
+        help="full patch-equivalence comparison or bounded structural overview",
+    )
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     return parser.parse_args(argv)
 
@@ -858,15 +1165,26 @@ def main(argv: list[str] | None = None) -> int:
             raise CompareError(
                 "repository", f"repository directory does not exist: {repo}"
             )
-        report = compare(repo, args.upstream_base, args.upstream_target, args.fork)
+        report = compare(
+            repo,
+            args.upstream_base,
+            args.upstream_target,
+            args.fork,
+            mode=args.mode,
+        )
         exit_code = 0
     except CompareError as exc:
         report = {
             "tool": TOOL_NAME,
             "schema_version": SCHEMA_VERSION,
+            "mode": args.mode,
             "status": "error",
             "repository": str(repo),
-            "error": {"code": exc.code, "message": str(exc)},
+            "error": {
+                "code": exc.code,
+                "message": str(exc),
+                "stage": exc.stage or "initialization",
+            },
             "review_required": True,
         }
         exit_code = 2
@@ -876,9 +1194,14 @@ def main(argv: list[str] | None = None) -> int:
         report = {
             "tool": TOOL_NAME,
             "schema_version": SCHEMA_VERSION,
+            "mode": args.mode,
             "status": "error",
             "repository": str(repo),
-            "error": {"code": exc.code, "message": str(exc)},
+            "error": {
+                "code": exc.code,
+                "message": str(exc),
+                "stage": exc.stage or "render-report",
+            },
             "review_required": True,
         }
         exit_code = 2
