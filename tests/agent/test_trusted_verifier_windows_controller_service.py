@@ -222,6 +222,63 @@ def test_native_pipe_returns_incomplete_and_observes_kernel_client_pid():
 
 
 @pytest.mark.platforms("windows")
+def test_idle_listener_keeps_first_pipe_instance_until_client_connects():
+    kernel = _native_client_api()
+
+    class ObservedService(WindowsForegroundControllerService):
+        def __init__(self):
+            super().__init__(
+                acknowledge_no_trusted_success=True,
+                acknowledge_no_service_install=True,
+            )
+            self.created_instances = 0
+            self.handled_connections = 0
+            self.connection_seen = threading.Event()
+
+        def _create_pipe(self):
+            self.created_instances += 1
+            return super()._create_pipe()
+
+        def _handle_connection(self, handle):
+            self.handled_connections += 1
+            self.connection_seen.set()
+            super()._handle_connection(handle)
+
+    service = ObservedService()
+    errors: list[BaseException] = []
+
+    def serve():
+        try:
+            service.serve_forever()
+        except BaseException as exc:  # captured for assertion in the test thread
+            errors.append(exc)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        # Give PIPE_NOWAIT's initial successful listen transition time to be
+        # followed by ERROR_PIPE_LISTENING, without relying on a fixed sleep.
+        assert not service.connection_seen.wait(2)
+        assert service.last_observed_client_pid is None
+        assert service.created_instances == 1
+
+        for _ in range(2):
+            response = ControllerMessage.from_wire(
+                _exchange(kernel, service.pipe_name, _request().to_wire())
+            )
+            assert response.status is ControllerStatus.INCOMPLETE
+        assert service.handled_connections == 2
+        assert service.created_instances == 1
+        assert service.last_observed_client_pid == os.getpid()
+        assert not errors
+    finally:
+        service.stop()
+        thread.join(timeout=3)
+    assert not thread.is_alive()
+    assert not errors
+
+
+@pytest.mark.platforms("windows")
 @pytest.mark.parametrize(
     "payload,length",
     [

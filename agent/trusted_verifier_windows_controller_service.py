@@ -183,7 +183,11 @@ class WindowsForegroundControllerService:
             raise WindowsControllerServiceError("could not set named-pipe connect mode")
         while not self._stop.is_set():
             if self._kernel.ConnectNamedPipe(handle, None):
-                return True
+                # In PIPE_NOWAIT mode success can mean the pipe has only
+                # transitioned into listening state. A client is connected
+                # only when a later call reports ERROR_PIPE_CONNECTED.
+                self._stop.wait(0.025)
+                continue
             error = ctypes.get_last_error()
             if error == _ERROR_PIPE_CONNECTED:
                 return True
