@@ -81,7 +81,7 @@ The exact event/source branches are:
 | `evidence_observed` | controller | running | evidence_observed |
 | `await_verification` | controller | running or evidence_observed | awaiting_verification |
 | `trusted_verified` | future trusted-verifier seam | awaiting_verification | verified_accepted |
-| `worker_failed` | worker | reserved, running, or evidence_observed | rejected_failed |
+| `worker_failed` | worker | reserved, running, or already rejected_failed | rejected_failed |
 | `worker_unknown` | worker | reserved through verifier_unavailable | unknown_incomplete |
 | `interrupt_cancel` | controller | any active state | interrupted_cancelled |
 | `verifier_unavailable` | controller | awaiting_verification | verifier_unavailable |
