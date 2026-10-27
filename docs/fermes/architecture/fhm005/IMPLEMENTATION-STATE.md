@@ -1,6 +1,6 @@
 # FHM-005 implementation state
 
-**Status: BLUEPRINT CANDIDATE — nonprivileged FHM005-IMP-001 contract/state-machine implementation MERGED; trusted controller architecture and release NOT approved.**
+**Status: BLUEPRINT CANDIDATE — IMP-001 contracts and IMP-002 POSIX-only observation source MERGED; Windows/trusted authority NOT qualified.**
 
 | Field | State |
 | --- | --- |
@@ -43,9 +43,17 @@ and [DECISIONS.md](../../memory/DECISIONS.md). This candidate does not edit thos
 - [Issue #27](https://github.com/fredheathcote007/hermes-agent/issues/27) CLOSED completed.
 - **Limitation:** no controller, authenticated IPC, protected service identity, durable one-use CAS, trusted effect readback, parent/UI integration or native Linux/Windows security qualification exists from these two contracts. Python object/status fields must never be treated as independent authority.
 
-## Next task — FHM005-IMP-002 candidate
+## IMP-002 source-only POSIX candidate merged — Windows release gate remains
 
-Specify canonical workspace/artefact identity, version and digest rules and negative tests, including rename/symlink/junction/reparse-point, TOCTOU and scope binding. Pure design/tests may be reviewed, but **DR-04 receipt security semantics, DR-03 native platform implementation and DR-02 concrete same-user-resistant parent authentication must be approved and proven before trusted controller/IPC implementation or enablement**. Keep Linux and Windows native qualification as a combined release gate (DEC-005).
+- [PR #33](https://github.com/fredheathcote007/hermes-agent/pull/33) MERGED at `b5c3cf9ad2c5fd26747aac4582968fcef9e6d12d`: POSIX no-follow descriptor-based file identity, root binding and bounded SHA-256 observations; deliberately **not** used by Hermes completion paths.
+- [FHM005-IMP-002 issue #35](https://github.com/fredheathcote007/hermes-agent/issues/35) tracks the source-only POSIX milestone.
+- Project Coordinator: **82 focused tests PASS**, Ruff and compile PASS; exact-head hosted CI [#40443854739](https://github.com/fredheathcote007/hermes-agent/actions/runs/40443854739) PASS. Independent Cursor initial+follow-up review completed; all identified source-only P1 and test hardening resolved.
+- **NOT qualified:** native Windows reparse/junction and volume/file identity, same-device bind mounts, restored TOCTOU, kernel/FUSE I/O hang, forgeable Python observations, or actual effects. Windows path explicitly returns `UNSUPPORTED`. DEC-005 still mandates both OSs for trusted release.
+
+## Next task — FHM005-IMP-003 design and pure receipt-contract qualification
+
+Review nonce/authority/policy/freshness binding, durable atomic one-use receipt generation/consume design and crash/replay cases. **The concrete DR-02 same-user-resistant parent authentication and DR-04 protected receipt repository semantics must be approved before implementing an authoritative store or service.** Source-only schemas and red/green tests can be prepared without activating authority. Keep Linux and Windows qualification a joint release gate.
+
 
 ## Gates before each expansion
 
@@ -71,3 +79,7 @@ Independent Cursor review identified legacy receipt, delegate, request-client, m
 ## Approved direction update (27 October 2026)
 
 **DEC-007:** owner approved separate protected controller, authenticated Hermes parent, restricted worker execution. The exact Linux and Windows same-user impersonation-resistant mechanism remains unapproved/unproven; trusted service installation or success reporting must not proceed without it. PR #26 remains a non-authoritative contract-only implementation, not a protected verifier.
+
+## 27 October 2026 — source-only IMP-002 checkpoint
+
+PR #33 merged source-only (see above), no privileged runtime service, keys, OS configuration, production deployment or FHM-007 writes. Current trusted-verifier status remains P0 OPEN; manual/external verification fallback preserved.

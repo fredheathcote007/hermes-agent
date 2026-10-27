@@ -80,7 +80,21 @@
         "negative race test results"
       ],
       "rollback": "Keep artifact module unused and fall back to manual/external verification.",
-      "gate": "no trusted receipt may omit exact scope and artifact binding"
+      "gate": "no trusted receipt may omit exact scope and artifact binding",
+      "status": "posix_source_only_merged_windows_native_pending",
+      "completed_evidence": [
+        "PR #33 merged b5c3cf9ad2c5fd26747aac4582968fcef9e6d12d",
+        "82 focused host tests PASS; Ruff and Python compile PASS",
+        "Independent Cursor exact head + follow-up no source-only P0/P1",
+        "Hosted exact-head CI #40443854739 PASS",
+        "Issue #35: source-only POSIX qualification and test evidence"
+      ],
+      "outstanding_release_gates": [
+        "Native Windows reparse-safe volume/file-ID support and negative tests unimplemented",
+        "Same-device bind mounts and restored TOCTOU cannot be ruled out",
+        "No guaranteed kernel/FUSE/NFS I/O wall-clock bound",
+        "Observation DTO is untrusted and not controller/receipt authority"
+      ]
     },
     {
       "id": "FHM005-IMP-003",
