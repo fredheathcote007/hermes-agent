@@ -59,10 +59,34 @@ than retried.
 
 Rows are `issued`, `consumed`, `expired`, or `unknown_incomplete`. Expired
 rows are fenced before a consume attempt. After a crash or uncertain restart,
-the future controller must call `reconcile_after_restart`: all still-issued
-rows are durably changed to `unknown_incomplete`. They cannot be consumed,
-resumed, or converted to verified success. This deliberately does not infer
-whether an external mutation happened, and it does not replay the mutation.
+reopening an existing database enters a `reconcile_required` startup barrier.
+The future controller must call `reconcile_after_restart` before issue/consume
+operations: all still-issued rows are durably changed to `unknown_incomplete`.
+They cannot be consumed, resumed, or converted to verified success. A
+controller that has independently established that another process still owns
+the live generation may use the explicit `open_for_live_generation` API (or
+its join method), passing that generation. This is only a non-authenticating
+candidate-model gate: it does not establish service identity, liveness,
+authority, or trusted completion. This deliberately does not infer whether an
+external mutation happened, and it does not replay the mutation.
+
+## P1 integration gate
+
+This source-only model is not integration-ready. Before any protected
+controller or worker wiring, integration must provide an explicit architecture
+and security gate for restart fencing, live-generation ownership, service
+identity, and manual recovery. The `open_for_live_generation` API is a
+caller-controlled, unsafe bypass of crash fencing: it can consume an existing
+issued row without reconciliation when the caller supplies the matching
+generation. It MUST NEVER be exposed to workers or routine callers. A future
+protected controller must authenticate the live generation with out-of-band
+proof, or remove this API. `CandidateConsumeResult.consumed` remains only a
+candidate transition and never authorizes completion.
+
+If that gate is unavailable or a live-generation proof is ambiguous, the
+required behavior is fail-closed: do not issue or consume, reconcile the store
+to `unknown_incomplete` when safe, and use an operator-approved manual fallback
+for any retry or recovery. No automatic resume or completion claim is valid.
 
 ## Durability and scope limits
 
@@ -70,11 +94,12 @@ The model requests SQLite WAL mode and `synchronous=FULL`, and tests use local
 POSIX temporary files. This is a candidate local-file durability profile for
 local POSIX/NTFS behavior only; it makes no unsupported guarantee for network,
 remote, or otherwise unusual filesystems. The model requires an absolute path,
-an existing parent directory, and a non-symlink regular database file. A
-future protected controller still has to enforce owner-only directory/file
-permissions, service identity, process isolation, retention/purge, and its
-native Linux and Windows qualification gates. The model does not establish
-any of those boundaries.
+an existing parent directory whose path components are not symlinks, and a
+non-symlink regular database file. This is an open-time check only and is not
+a TOCTOU defense. A future protected controller still has to enforce owner-only
+directory/file permissions, service identity, process isolation, retention/purge,
+and its native Linux and Windows qualification gates. The model does not
+establish any of those boundaries.
 
 The adversarial tests cover duplicate identity rollback, one-use replay,
 cross-session and foreign scope rejection, expiry, generation/root mismatch,
