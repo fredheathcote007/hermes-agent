@@ -1,8 +1,8 @@
 # Fermes Hermes — controlled upstream maintenance
 
-project_id: fermes-hermes  
-Issue owner: [FHM-011](https://github.com/fredheathcote007/hermes-agent/issues/11)  
-Policy: [DEC-001](memory/DECISIONS.md) — no unattended upstream adoption  
+project_id: fermes-hermes
+Issue owner: [FHM-011](https://github.com/fredheathcote007/hermes-agent/issues/11)
+Policy: [DEC-001](memory/DECISIONS.md) — no unattended upstream adoption
 Last evidence review: 2026-10-27 (Australia/Perth)
 
 ## Repository identity and branch boundaries
