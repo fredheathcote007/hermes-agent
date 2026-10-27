@@ -302,6 +302,8 @@ class AttemptState:
         # with independently authenticated provenance, not this convenience loader.
         if status is AttemptStatus.VERIFIED_ACCEPTED:
             raise AttemptContractError("trusted completion cannot be restored from untrusted state")
+        if status is AttemptStatus.REQUESTED and current >= request.expires_at:
+            raise AttemptContractError("expired attempt cannot be resumed")
         state = cls(request=request, status=status, created_at=created, updated_at=updated)
         if status in _RELOAD_UNCERTAIN:
             return cls(request=request, status=AttemptStatus.UNKNOWN_INCOMPLETE,
@@ -324,6 +326,10 @@ class AttemptState:
         if event.session_id != self.session_id or event.attempt_id != self.attempt_id:
             raise AttemptContractError("event is bound to another attempt")
         target = self._target(event)
+        # No active or accepting transition is allowed after the request's
+        # deadline, including replaying a previously requested/reserved attempt.
+        if current >= self.request.expires_at and target in _ACTIVE | {AttemptStatus.VERIFIED_ACCEPTED}:
+            raise AttemptContractError("expired attempt cannot advance")
         if target is self.status:
             return self
         if occurred < self.updated_at:
@@ -374,6 +380,14 @@ class AttemptState:
             raise AttemptContractError("acceptance requires a bound trusted validator proof")
         if not proof.validation.verified or proof.receipt is None:
             raise AttemptContractError("acceptance requires successful receipt validation")
+        # Do not accept a manually constructed proof whose validation/receipt
+        # belongs to another attempt. The future controller must still supply
+        # genuine authenticated provenance and durable one-use CAS.
+        receipt = proof.receipt
+        for field in ("root", "version", "session_id", "attempt_id", "authority", "scope",
+                      "policy_digest", "nonce", "correlation_id", "expected_effects"):
+            if getattr(receipt, field) != getattr(self.request, field):
+                raise AttemptContractError("trusted proof receipt is foreign")
         if not self.request.expected_effects:
             raise AttemptContractError("zero expected effects cannot be verified")
 

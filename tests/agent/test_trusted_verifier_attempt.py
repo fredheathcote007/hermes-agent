@@ -305,3 +305,43 @@ def test_untrusted_saved_snapshot_cannot_rehydrate_verified_success():
     saved["status"] = AttemptStatus.VERIFIED_ACCEPTED.value
     with pytest.raises(AttemptContractError, match="trusted completion cannot be restored"):
         AttemptState.from_mapping(saved, request=state.request, now=NOW)
+
+
+def test_expired_requested_snapshot_does_not_restart():
+    state = AttemptState.new(_request(), now=NOW)
+    saved = state.to_mapping()
+    with pytest.raises(AttemptContractError, match="expired attempt cannot be resumed"):
+        AttemptState.from_mapping(saved, request=state.request, now=state.request.expires_at)
+
+
+def test_expired_active_state_cannot_advance():
+    state = AttemptState.new(_request(), now=NOW)
+    with pytest.raises(AttemptContractError, match="expired attempt cannot advance"):
+        state.apply(_event(state, AttemptEventKind.RESERVE, AttemptEventSource.CONTROLLER),
+                    now=state.request.expires_at)
+
+
+def test_forged_proof_for_another_attempt_cannot_authorize_completion():
+    import agent.trusted_verifier_attempt as attempt_module
+    from agent.trusted_verifier_attempt import TrustedVerificationProof
+    from agent.trusted_verifier_contract import (
+        ValidationResult, ValidationStatus, VerificationReceipt,
+    )
+
+    state = _awaiting_state()
+    other_request = _request(attempt_id="foreign-attempt", nonce="foreign-nonce")
+    foreign_receipt = VerificationReceipt.from_mapping(_receipt(other_request))
+    forged_proof = TrustedVerificationProof(
+        request=state.request,
+        validation=ValidationResult(
+            status=ValidationStatus.VERIFIED,
+            receipt=foreign_receipt,
+        ),
+        _capability=attempt_module._PROOF_CAPABILITY,
+    )
+    with pytest.raises(AttemptContractError, match="trusted proof receipt is foreign"):
+        state.apply(
+            _event(state, AttemptEventKind.TRUSTED_VERIFIED,
+                   AttemptEventSource.TRUSTED_VERIFIER, proof=forged_proof),
+            now=NOW,
+        )
