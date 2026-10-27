@@ -160,6 +160,7 @@ def test_mixed_paths_filter_docs_but_keep_code_fail_closed(tmp_path, monkeypatch
     assert code in nudge
     assert doc not in nudge
     assert has_verifiable_paths([doc, code])
+    assert verification_unresolved(session_id="owner", changed_paths=[doc, code])
 
 
 def test_docs_only_paths_need_no_verifier_or_nudge(monkeypatch, tmp_path):
@@ -199,3 +200,5 @@ def test_stop_nudge_retries_are_bounded_and_missing_evidence_stays_visible(
         )
         is None
     )
+    # Exhaustion suppresses further nudges; it never verifies the edit.
+    assert verification_unresolved(session_id="owner", changed_paths=[changed])
