@@ -74,6 +74,11 @@ Use [AGENT-EXECUTION-PROTOCOL.md](memory/AGENT-EXECUTION-PROTOCOL.md) for bounde
 
 ## Offline comparison workflow (FHM-011 Step 2)
 
+Step 3 canary rehearsal evidence: [FHM-011 canary rehearsal report](compatibility/FHM-011-CANARY-20261026-REHEARSAL.md).
+The bounded comparator scope is 256 non-merge commits and 4 MiB Git output/patch input; the large
+canary release exceeded that binary-diff capacity and correctly failed closed with `bounded_output`.
+That is a tool-capacity result, not evidence that the candidate is safe or unsafe.
+
 `scripts/fermes_upstream_compare.py` is an offline, read-only comparison wrapper around the
 installed Git executable. It requires an explicit worktree and three existing local refs:
 
