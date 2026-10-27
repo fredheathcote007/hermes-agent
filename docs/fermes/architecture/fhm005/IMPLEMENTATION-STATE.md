@@ -57,6 +57,13 @@ and [DECISIONS.md](../../memory/DECISIONS.md). This candidate does not edit thos
 - [IMP-003 issue #36](https://github.com/fredheathcote007/hermes-agent/issues/36) remains OPEN P0 for protected store issuance, authenticated parent, mandatory restart reconciliation, native dual-platform qualification, integration and operational proof. Do not confuse candidate `consumed` with trusted `VERIFIED`.
 - [Linux sandbox security issue #38](https://github.com/fredheathcote007/hermes-agent/issues/38) OPEN P0: Ubuntu 26.04 installed Bubblewrap 0.11.1-1ubuntu0.3 is not acceptable without qualifying its vulnerability applicability/mitigation. [Draft PR #39](https://github.com/fredheathcote007/hermes-agent/pull/39) records the required security gate; no host package changes.
 
+## 27 October 2026 — additional source-only qualifications
+
+- [PR #24](https://github.com/fredheathcote007/hermes-agent/pull/24) **MERGED** at `97c5a51eff68598bc209c0ab716c991f6fa19635`: false-success TUI/Desktop status projection; 52 focused host tests, exact-head CI #40448998036 and independent Cursor initial+refreshed review PASS. Other client surfaces and malformed non-dict legacy results still require comprehensive status-parity review.
+- [PR #42](https://github.com/fredheathcote007/hermes-agent/pull/42) **MERGED** at `245b19dc8bd7e8c602b7612c3d70d001c8f12c4a`: unconnected receipt candidate startup barrier, explicit non-authoritative live-generation join, invalidated ambiguous commits and adversarial tests; 114 focused host tests, exact-head CI #40449660701, Cursor source-only PASS WITH CONDITIONS.
+- The live-generation join is caller-controlled. It **can bypass** restart fencing unless a separately protected controller first authenticates the parent instance and its generation. Merged source tests *demonstrate this hazard* rather than authorising trusted completion. IMP-003 [#36](https://github.com/fredheathcote007/hermes-agent/issues/36) remains OPEN P0.
+- New DR-02/DR-04 concrete security mechanism is being prepared as an **unapproved** owner decision candidate. DEC-007 separation principle is the only accepted architectural portion; option names retain owner-approved A=local protected controller, B=manual/external fallback.
+
 ## Next: resolve remaining security architecture approval gates
 
 DR-02 concrete same-user-resistant parent identity and DR-04 protected receipt storage/issuance, including receipt state ownership and crash handling, remain **unapproved**. DR-03 and DR-05–07 must then be resolved before protected controller/service deployment. Source-only tests are not a native Linux/Windows trusted-verifier qualification. Retain manual/external fallback, no uncertain-effect replay and no FHM-007 writes.

@@ -129,13 +129,16 @@
         "PR #40 merged 6fd54dc4c17831c0c7e0b5fb1627522f6c218384",
         "73 host tests PASS; Ruff and compile PASS",
         "independent Cursor original and follow-up report no remaining source-only P0/P1",
-        "exact head hosted CI #40446760100 PASS"
+        "exact head hosted CI #40446760100 PASS",
+        "PR #42 merged 245b19dc: receipt model reopen barrier, ambiguous commit fail-closed; 114 focused host tests, Cursor exact-head review and CI #40449660701 PASS"
       ],
       "unmet_acceptance": [
         "DR-02 actual parent authentication and same-user impersonation resistance",
         "DR-04 service-owned receipt persistence, mandatory restart reconcile and commit ambiguity handling",
         "native Linux and Windows trust-boundary tests",
-        "end-to-end effect observation and fail-closed completion gating"
+        "end-to-end effect observation and fail-closed completion gating",
+        "Unauthenticated live-generation join MUST NOT be usable to skip restart fence in trusted controller",
+        "Service-owned DB, authenticated parent, native Linux and Windows effect/replay tests remain unqualified"
       ]
     },
     {
