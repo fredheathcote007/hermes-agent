@@ -263,6 +263,48 @@ def test_cross_attempt_events_and_bad_times_fail_closed():
         state.apply(stale, now=NOW + timedelta(seconds=1))
 
 
+def test_trusted_completion_rejects_wrong_source_and_event_binding():
+    state = _awaiting_state()
+    proof = _proof(state.request)
+
+    with pytest.raises(AttemptContractError, match="trusted verification requires a validator proof"):
+        _event(
+            state,
+            AttemptEventKind.TRUSTED_VERIFIED,
+            AttemptEventSource.CONTROLLER,
+            proof=proof,
+        )
+
+    foreign_event = AttemptEvent(
+        session_id=state.session_id,
+        attempt_id="foreign-attempt",
+        kind=AttemptEventKind.TRUSTED_VERIFIED,
+        source=AttemptEventSource.TRUSTED_VERIFIER,
+        occurred_at=NOW,
+        proof=proof,
+    )
+    with pytest.raises(AttemptContractError, match="another attempt"):
+        state.apply(foreign_event, now=NOW)
+
+
+def test_terminal_rejection_is_idempotent_but_cannot_change_outcome():
+    state = _running_state()
+    rejected = state.apply(
+        _event(state, AttemptEventKind.WORKER_FAILED, AttemptEventSource.WORKER),
+        now=NOW,
+    )
+
+    assert rejected.apply(
+        _event(rejected, AttemptEventKind.WORKER_FAILED, AttemptEventSource.WORKER),
+        now=NOW,
+    ) is rejected
+    with pytest.raises(AttemptContractError):
+        rejected.apply(
+            _event(rejected, AttemptEventKind.INTERRUPT_CANCEL, AttemptEventSource.CONTROLLER),
+            now=NOW,
+        )
+
+
 def test_reload_turns_uncertain_in_flight_snapshot_into_sticky_unknown_without_replay():
     state = _running_state()
     restored = AttemptState.from_mapping(

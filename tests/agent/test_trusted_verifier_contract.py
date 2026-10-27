@@ -134,6 +134,24 @@ def test_receipt_binding_mismatch_is_incomplete(field):
 
 
 @pytest.mark.parametrize(
+    "field, reason",
+    [
+        ("expected_effects", "request_mismatch:expected_effects"),
+        ("artifact_subjects", "effects_unobservable_or_mismatched"),
+    ],
+)
+def test_valid_looking_digest_mutation_does_not_bind_receipt_evidence(field, reason):
+    payload = _receipt()
+    forged_digest = "sha256:" + "9" * 64
+    payload[field][0]["digest"] = forged_digest
+
+    result = _validate(payload)
+
+    assert result.status is ValidationStatus.INCOMPLETE
+    assert reason in result.reasons
+
+
+@pytest.mark.parametrize(
     "status", [ReceiptStatus.REJECTED.value, ReceiptStatus.UNAVAILABLE.value, ReceiptStatus.NOT_VERIFIED.value],
 )
 def test_non_verified_receipt_status_never_succeeds(status):

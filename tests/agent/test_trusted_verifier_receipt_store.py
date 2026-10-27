@@ -189,6 +189,44 @@ def test_restart_reconciliation_marks_uncertain_work_unknown_without_auto_resume
         assert state == CandidateState.UNKNOWN_INCOMPLETE.value
 
 
+def test_restart_preserves_consumed_terminal_state_and_rejects_replay(tmp_path):
+    db_path = tmp_path / "candidate.db"
+    first = CandidateReceiptStore(db_path)
+    candidate = _issue(first)
+    assert first.consume(candidate, now=NOW + timedelta(seconds=1)).consumed
+    first.close()
+
+    with CandidateReceiptStore(db_path) as restarted:
+        assert restarted.reconcile_required
+        assert restarted.reconcile_after_restart(now=NOW + timedelta(seconds=2)) == 0
+        replay = restarted.consume(candidate, now=NOW + timedelta(seconds=3))
+
+    assert replay.status is CandidateConsumeStatus.INCOMPLETE
+    assert replay.reason == "replay"
+    assert replay.state is CandidateState.CONSUMED
+
+
+def test_same_user_sqlite_mutation_can_bypass_cas_but_is_not_authority(tmp_path):
+    """Expose the remaining protected-controller gate without treating it as fixed."""
+    db_path = tmp_path / "candidate.db"
+    with CandidateReceiptStore(db_path) as store:
+        candidate = _issue(store)
+        assert store.consume(candidate, now=NOW + timedelta(seconds=1)).consumed
+
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "UPDATE candidate_receipts SET state='issued', consumed_at=NULL WHERE row_id=1",
+    )
+    connection.commit()
+    connection.close()
+
+    with CandidateReceiptStore.open_for_live_generation(db_path, generation=7) as reopened:
+        result = reopened.consume(candidate, now=NOW + timedelta(seconds=2))
+
+    assert result.status is CandidateConsumeStatus.CONSUMED
+    # The result remains only a candidate-store transition; no trusted proof exists.
+
+
 def test_live_generation_join_rejects_issue_and_consume_from_other_generation(tmp_path):
     db_path = tmp_path / "candidate.db"
     first = CandidateReceiptStore(db_path)
