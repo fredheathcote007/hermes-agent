@@ -67,7 +67,8 @@ def test_linux_unprivileged_socketpair_observes_kernel_peer_and_rejects_mismatch
         pytest.fail("Linux AF_UNIX/SO_PEERCRED API is unavailable; deny by default")
 
     expected = _ObservedPeer(user_id=os.getuid(), process_id=os.getpid())
-    with socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM) as (left, _right):
+    left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    with left, right:
         observed = _linux_socket_peer_credentials(left)
 
     assert observed == expected
