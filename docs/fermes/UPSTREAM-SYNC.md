@@ -1,44 +1,72 @@
-# Fermes Hermes maintenance: Qwen / LM Studio branch
+# Fermes Hermes — controlled upstream maintenance
 
-## Scope
+project_id: fermes-hermes
+Issue owner: [FHM-011](https://github.com/fredheathcote007/hermes-agent/issues/11)
+Policy: [DEC-001](memory/DECISIONS.md) — no unattended upstream adoption
+Last evidence review: 2026-10-27 (Australia/Perth)
 
-This branch begins at the official Hermes `v0.22.5` release, commit
-`bf0203a794a07aac3ff764972ab9087baa4e4f4e`. The canonical fork is
-`fredheathcote007/hermes-agent`; upstream is `NousResearch/hermes-agent`.
+## Repository identity and branch boundaries
 
-The source changes are limited to LM Studio loaded-instance alias and context
-selection, local-provider metadata, reasoning-probe failure handling and tests.
-The fork's `main` branch is not changed by this work.
+- **Official upstream:** [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
+- **Our fork:** [fredheathcote007/hermes-agent](https://github.com/fredheathcote007/hermes-agent).
+- **Pinned upstream baseline:** Hermes v0.22.5, commit bf0203a794a07aac3ff764972ab9087baa4e4f4e. Verify the release tag and SHA before reuse.
+- **Maintained fork compatibility branch:** fermes/qwen-lmstudio-v0225-20261026. This branch contains multiple separately tested Fermes modifications, not only LM Studio aliases: routing/credentials, malformed Qwen tool-call recovery, bounded supervision/crash recovery and verification hardening.
+- **Fork main:** separate integration channel. A merge into the maintained compatibility branch is **not** a merge into fork main, an installation, or a runtime deployment. Compare GitHub branch SHAs and actual installation provenance before asserting promotion.
+- **Canonical issue tracker:** [FHM-011](https://github.com/fredheathcote007/hermes-agent/issues/11); [dated upstream crosswalk](compatibility/UPSTREAM-ISSUE-PR-CROSSWALK-20261027.md) is a review snapshot, not a second backlog.
 
-## Remote roles for this local checkout
+This guide covers **source maintenance**; no running Hermes service, LM Studio endpoint, credentials, unrelated worktrees or fork main may be changed as a side effect of a documentation or comparison task.
 
-- `origin` -> `https://github.com/NousResearch/hermes-agent.git` (upstream fetch)
-- `fork` -> `https://github.com/fredheathcote007/hermes-agent.git` (fork push)
+## Verified remote names — Project Coordinator (27 October 2026)
 
-Check the actual remotes before using commands below; other clones may use
-`origin` for the fork and `upstream` for the official source.
+For the **existing clean** checkout at /srv/project-coordinator/projects/fermes-hermes-qwen-v0225:
 
-## Deliberate upstream adoption (never auto-update a patched build)
+| Remote | Observed URL | Purpose |
+|---|---|---|
+| origin | https://github.com/NousResearch/hermes-agent.git | Official upstream, fetch for this workflow |
+| fork | https://github.com/fredheathcote007/hermes-agent.git | Fermes fork, push only with approval |
 
-1. Make sure the working tree is clean, and retain a known-good release/rollback
-   commit before updating. Back up profile state separately from source code.
-2. Fetch official tags: `git fetch origin --tags`.
-3. Inspect the new official release notes, compare changes and identify overlap
-   with the local fixes. If upstream already fixed a local defect, remove the
-   redundant fork patch rather than carrying competing implementations.
-4. On a throwaway update branch from this maintenance branch, merge the exact
-   reviewed release tag, e.g. `git merge --no-ff v0.22.6`. Do not merge an
-   unreviewed moving `main` into the qualified branch.
-5. Resolve conflicts, run local Qwen/LM Studio regression tests and independent
-   review, and only then integrate the update branch and push with `git push fork`.
-6. Keep a rollback tag or SHA. Avoid using `hermes update` to advance this
-   locally patched source checkout without reviewing its fork/channel policy.
+The verified checkout was on branch fermes/qwen-lmstudio-v0225-20261026 and had a clean short status. **These observed remote names are not universal.** A different clone may use origin for the fork and upstream for official source.
 
-## Current acceptance boundaries
+Before every fetch, branch, merge or push, run the read-only checks below *inside the intended checkout*:
 
-- Focused and adjacent Python unit tests have passed on the Linux host.
-- Direct Qwen/LM Studio tool-call output and actual model catalogue metadata
-  were observed on Dad-PC; this is not a Hermes-to-LM-Studio end-to-end pass.
-- Hermes live integration against the local LM Studio gateway, uninterrupted
-  autonomous execution, compaction, memory and self-optimisation are NOT
-  qualified by this patch alone.
+    git status --short --branch
+    git branch --show-current
+    git remote -v
+    git remote get-url origin
+    git remote get-url fork
+    git rev-parse HEAD
+
+If either name does not exist, inspect the actual remotes and replace the names in the commands **only after validating both repository URLs**. Never rewrite remotes merely to match this guide. Stop on project identity mismatch; see [MEMORY-INDEX.md](memory/MEMORY-INDEX.md).
+
+## Deliberate, source-only upstream release adoption
+
+**FHM-011 implementation and upgrade rehearsal are still open.** This is the planned runbook, not a claim of a completed update.
+
+1. **Freeze state:** record the current qualified fork SHA, tested upstream release/tag, model/provider/runtime versions, clean worktree, CI and rollback point. Back up profile, configuration and any schema-sensitive data separately if a deployment is later considered. Never reset an active worktree.
+2. **Verify and fetch:** ensure the selected remote URL actually points to official NousResearch, then fetch its refs/tags (e.g. git fetch origin --tags *only when origin is verified as official*). Choose an **existing, verified release tag and SHA**; a version placeholder is not a verified release. Do not merge moving upstream main.
+3. **Analyse changes:** compare official notes/code/dependencies/security and migrations with fork patches. Specifically check whether upstream fixes duplicate merged fork [PR #15](https://github.com/fredheathcote007/hermes-agent/pull/15), [#18](https://github.com/fredheathcote007/hermes-agent/pull/18), [#20](https://github.com/fredheathcote007/hermes-agent/pull/20), [#21](https://github.com/fredheathcote007/hermes-agent/pull/21), [#22](https://github.com/fredheathcote007/hermes-agent/pull/22) or subsequent additions. Record the actual upstream and fork SHAs and avoid duplicate implementations.
+4. **Isolate candidate:** make a **new unique branch/worktree** based on the verified qualified fork SHA. Merge or adapt only the selected pinned release in that disposable worktree. Address patch overlap with focused tests and rationale; do not modify an active FHM-005 or FHM-007 worktree.
+5. **Qualify:** run lint/unit/integration and affected regression tests; exercise real Hermes to LM Studio/Qwen tool and no-tool paths when relevant, bounded stop/recovery, evidence verification, compaction/memory, and Linux/Windows gates where applicable. Record exact source SHA/model and PASS/FAIL/SKIP separately; an unrun test is not PASS. Require independent Cursor review.
+6. **Review before promotion:** open a PR targeting the maintained compatibility branch, include the upstream diff, patch-deduplication rationale and rollback instructions. No automatic merge into fork main, runtime installer or production.
+7. **Rehearse rollback:** demonstrate that a rejected update candidate leaves the qualified branch untouched. A deployed rollback requires separately authorised backups/restoration and compatible profiles/databases, not just reverting Git.
+8. **Close out evidence:** update [FHM-011](https://github.com/fredheathcote007/hermes-agent/issues/11) and impacted issues with source/fork SHAs, test and review links, decision and explicit distinction between code merged and runtime deployed.
+
+Do **not** use an unreviewed Hermes updater to advance a patched checkout; the updater may follow an incompatible channel. Do not force-push, silently replace source, change host/network security or publish secrets.
+
+## Qualified behaviour versus open work (27 October 2026)
+
+**Source merged and scoped behaviour qualified:**
+- [Fermes PR #15](https://github.com/fredheathcote007/hermes-agent/pull/15) and [#18](https://github.com/fredheathcote007/hermes-agent/pull/18) merged to the maintained branch, with hosted CI and source tests. A disposable **real Hermes process** on Dad-PC WSL Ubuntu 24.04 connected to its local LM Studio endpoint (127.0.0.1:1234) and Qwen model qwen96k-nomtp (98,304-context setting). It passed no-tool finalisation, an actual terminal tool-use-and-result cycle, corrective retries for malformed tool calls, and fail-closed bounded exhaustion. See [FHM-002](https://github.com/fredheathcote007/hermes-agent/issues/2), [FHM-015](https://github.com/fredheathcote007/hermes-agent/issues/16) and [PROJECT-STATE.md](memory/PROJECT-STATE.md) for exact evidence.
+- [PR #20](https://github.com/fredheathcote007/hermes-agent/pull/20) merged with independent review, hosted CI and disposable real gateway stop/crash/restart tests ([FHM-004](https://github.com/fredheathcote007/hermes-agent/issues/4)).
+- [PR #21](https://github.com/fredheathcote007/hermes-agent/pull/21) and [#22](https://github.com/fredheathcote007/hermes-agent/pull/22) merged **phase-one, fail-closed verification** source and tests, not an independently protected trusted-verifier service.
+
+**Still open / not implied by those tests:**
+- They do **not** prove an update to fork main, a production installation, unattended operation or a general release-upgrade procedure.
+- [FHM-005](https://github.com/fredheathcote007/hermes-agent/issues/5) P0 requires independent outcome attestation and native Linux and Windows security qualification.
+- [FHM-006](https://github.com/fredheathcote007/hermes-agent/issues/6), [FHM-007](https://github.com/fredheathcote007/hermes-agent/issues/7), [FHM-008](https://github.com/fredheathcote007/hermes-agent/issues/8), [FHM-009](https://github.com/fredheathcote007/hermes-agent/issues/9) and [FHM-010](https://github.com/fredheathcote007/hermes-agent/issues/10) retain separate compaction integrity, local memory, learning and evaluation acceptance gates.
+- [FHM-017](https://github.com/fredheathcote007/hermes-agent/issues/28) and [FHM-018](https://github.com/fredheathcote007/hermes-agent/issues/29) remain P0 for repeated successful tool loops and late side effects.
+- No FHM-011 controlled release-upgrade exercise or rollback rehearsal has been accepted.
+
+## Safeguards and follow-up
+
+Use [AGENT-EXECUTION-PROTOCOL.md](memory/AGENT-EXECUTION-PROTOCOL.md) for bounded tool and independent-review instructions, including non-interactive closed stdin, precise source SHA and stop criteria. Record upstream changes as untrusted inputs until version applicability and regression evidence are checked. FHM-011 remains open until the comparison, deduplication, qualification and rollback workflow are implemented and independently demonstrated.
