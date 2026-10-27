@@ -39,6 +39,13 @@ Date: 2026-10-26
 Decision: For FHM-007 PR validation, do not schedule Blacksmith runners that remain queued. Disable inherited CI/Docker/Nix pull_request triggers on this isolated workstream and use a dedicated secret-free GitHub-hosted ubuntu-24.04 workflow for bounded tests. This reproduces the previously successful Fermes Fork CI workaround but pins the OS version because ubuntu-latest is migrating to Ubuntu 26.04 in October-November 2026. Preserve upstream release-only workflows. Do not weaken acceptance gates silently; document skipped inherited checks.
 Evidence: PR #19 queued workflows, GitHub runner reference, previous Fermes fork workflow fermes-pr-checks.yml.
 
+## DEC-006 — FHM-007 crash-safe deterministic memory commit (Option B)
+Scope: FHM-007 ReMe Stage 1 crash/replay integrity
+Status: Owner-approved ARCHITECTURE BASELINE; detailed security design and validation are mandatory, not implementation acceptance
+Date: 2026-10-27 (Australia/Perth)
+Decision: Select Option B from docs/fermes/FHM007-CRASH-IDEMPOTENCY-PROPOSAL.md. Preserve the full ReMe fork's file/BM25 engine while separating model-generated memory proposals from an application-authorised deterministic durable commit. Commit must bind request ID/fingerprint, actual source transcript hash, profile/agent/session and note ownership, and a server-controlled commit marker; replays must recognise committed effects without a second model mutation, and ambiguous or unverifiable outcomes fail closed. Treat only as effectively-once within a defined supported-filesystem fault model, never distributed exactly-once. Require independent detailed security review, SIGKILL/fault injection, CI matrix, real Qwen capture/retrieval, and separate FHM-006 checkpoint v2 design approval. No main merge, deployment, active Hermes change or relaxation of gates authorised.
+Evidence: Explicit owner approval in 2026-10-27 continuation; SIGKILL red test 5bbeabf; design candidate 942381f; ReMe draft PR #1. Revisit only when security review reveals a material defect or new owner decision is necessary.
+
 ## Proposed decisions — not approved
 
 ### FHM-007-PD-001 — Keep the memory-v2 ledger independent during architecture review
