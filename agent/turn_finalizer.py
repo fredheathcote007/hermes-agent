@@ -583,6 +583,16 @@ def finalize_turn(
     if _exit_failure is not None and _exit_failure.fails_turn:
         failed = True
 
+    # verify_on_stop stays opt-in for compatibility. When enabled, however, exhausted
+    # retries or missing/untrusted evidence are a failed outcome, never a successful stop.
+    from agent.turn_verification_finalize import apply_verification_outcome, verification_unresolved_at_finalize
+
+    verification_unresolved = verification_unresolved_at_finalize(agent)
+    failed, _turn_exit_reason, final_response = apply_verification_outcome(
+        verification_unresolved=verification_unresolved, interrupted=interrupted,
+        failed=failed, exit_reason=_turn_exit_reason, final_response=final_response,
+    )
+
     # Sibling producers (``turn_recovery``, ``codex_runtime``) return ``completed=False`` for an
     # interrupted turn; the gateway stream gate and the API run status rely on that contract.
     completed = (
@@ -692,6 +702,7 @@ def finalize_turn(
         "completed": completed,
         "turn_exit_reason": _turn_exit_reason,
         "failed": failed,
+        **({"verification_unresolved": True} if verification_unresolved else {}),
         "partial": False,  # True only when stopped due to invalid tool calls
         "interrupted": interrupted,
         "response_transformed": _response_transformed,

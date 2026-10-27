@@ -13,6 +13,7 @@ tool calls or reasoning.
 
 import logging
 import time
+import uuid
 import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -337,6 +338,9 @@ def _build_child_agent(
         child._delegate_parent_ref = weakref.ref(parent_agent)
     except TypeError:
         child._delegate_parent_ref = None  # non-weakref-able test doubles
+    # The weakref above is for registry traversal. Detached children also need
+    # a live owner until completion so late verification telemetry has a target.
+    child._delegate_verification_owner = parent_agent
     # Sidebar marker: subagent sessions stay out of session pickers even when a
     # parent delete orphans them (mirrors /branch's ``_branched_from``).
     if parent_sid and getattr(child, "_session_init_model_config", None) is not None:
@@ -449,7 +453,8 @@ def _route_overrides(route: Any) -> dict[str, Any]:
 def _build_children(
     task_list: list[dict[str, Any]], task_schemas: list[Optional[dict[str, Any]]], routes: list[Any], *,
     top_role: str, max_iterations: int, parent_agent,
-    live_deleg_id: Optional[str], live_writers: list, task_images: Optional[list[Optional[list[str]]]] = None,
+    live_deleg_id: Optional[str], live_writers: list, verification_attempt_id: str,
+    verification_authority: str, task_images: Optional[list[Optional[list[str]]]] = None,
 ) -> tuple[list[tuple], Optional[str]]:
     """Build every child on the main thread (construction is not thread-safe), each on its task's route;
     ``(children, None)`` or ``([], error)`` on an explicit-pin preflight failure."""
@@ -499,6 +504,34 @@ def _build_children(
             _ident_ref = getattr(child, "_progress_identity_ref", None)
             if isinstance(_ident_ref, dict):
                 _ident_ref["delegation_id"] = live_deleg_id
+        child._delegate_verification_session_id = str(getattr(parent_agent, "session_id", None) or "")
+        child._delegate_verification_attempt_id = verification_attempt_id
+        child._delegate_verification_authority = verification_authority
+        try:
+            from agent.verification_evidence import arm_delegated_verification
+
+            if not arm_delegated_verification(
+                session_id=child._delegate_verification_session_id,
+                attempt_id=verification_attempt_id, task_index=i, authority=verification_authority,
+            ):
+                raise RuntimeError("could not durably arm delegated verification")
+        except Exception as exc:  # health: allow BLE001 -- arm failure must refuse child execution
+            logger.warning("delegate_task: refusing child %d because verification state could not be armed: %s", i, exc)
+            from agent.verification_evidence import disarm_delegated_verification
+
+            for previous_index, _, built in children:
+                _detach_child(parent_agent, built)
+                _close_child(built, "Failed to close child after verification arm failure")
+                disarm_delegated_verification(
+                    session_id=child._delegate_verification_session_id,
+                    attempt_id=verification_attempt_id, task_index=previous_index, authority=verification_authority,
+                )
+            disarm_delegated_verification(
+                session_id=child._delegate_verification_session_id,
+                attempt_id=verification_attempt_id, task_index=i, authority=verification_authority,
+            )
+            _close_child(child, "Verification state arm failed")
+            return [], str(exc)
         children.append((i, t, child))
     return children, None
 
@@ -649,10 +682,15 @@ def delegate_task(
         _settle_refused_transcripts(refused, live_deleg_id, live_writers, _live_home)
     _announce_batch(parent_agent, len(task_list), live_deleg_id)
     origin = _capture_origin()
+    from agent.verification_evidence import verification_authority as _verification_authority
+
+    verification_attempt_id = live_deleg_id or f"verify_{uuid.uuid4().hex}"
+    verification_owner_authority = _verification_authority(parent_agent)
 
     children, err = _build_children(
         task_list, task_schemas, routes, top_role=top_role, max_iterations=default_max_iter, parent_agent=parent_agent,
-        live_deleg_id=live_deleg_id, live_writers=live_writers, task_images=task_images,
+        live_deleg_id=live_deleg_id, live_writers=live_writers, verification_attempt_id=verification_attempt_id,
+        verification_authority=verification_owner_authority, task_images=task_images,
     )
     if err:
         return tool_error(err)

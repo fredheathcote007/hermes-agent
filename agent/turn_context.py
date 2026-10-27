@@ -625,6 +625,32 @@ def _reset_per_turn_agent_state(agent: Any) -> None:
         setattr(agent, name, value)
     agent._turn_failed_file_mutations = {}
     agent._turn_file_mutation_paths = set()
+    agent._turn_unobservable_delegated_work = False
+    # Detached delegated children can finish after this turn. Their owner-scoped
+    # marker survives turn resets and is cleared only by independent verification.
+    if not hasattr(agent, "_pending_delegated_verification_lock"):
+        import threading
+        agent._pending_delegated_verification_lock = threading.RLock()
+    if not hasattr(agent, "_pending_delegated_verification_paths"):
+        agent._pending_delegated_verification_paths = set()
+    if not hasattr(agent, "_pending_unobservable_delegated_work"):
+        agent._pending_unobservable_delegated_work = False
+    agent._pending_durable_verification_error = False
+    try:
+        from agent.verification_evidence import pending_delegated_verification, verification_authority
+
+        durable_pending = pending_delegated_verification(
+            session_id=getattr(agent, "session_id", None), authority=verification_authority(agent),
+        )
+        with agent._pending_delegated_verification_lock:
+            agent._pending_delegated_verification_paths.update(durable_pending["paths"])
+            agent._pending_unobservable_delegated_work = (
+                bool(agent._pending_unobservable_delegated_work) or bool(durable_pending["unknown"])
+            )
+        agent._pending_durable_verification_error = bool(durable_pending["error"])
+    except Exception:  # health: allow BLE001 -- ledger read failure must fail closed
+        # A ledger read failure is itself unresolved while opt-in verification is active.
+        agent._pending_durable_verification_error = True
     agent._tool_guardrails.reset_for_turn()
     _reset_consol = getattr(agent._memory_store, "reset_consolidation_failures", None)
     if callable(_reset_consol):

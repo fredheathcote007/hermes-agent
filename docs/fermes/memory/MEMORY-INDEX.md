@@ -15,6 +15,7 @@ This memory belongs **only** to the maintained fork of `NousResearch/hermes-agen
 - Workstream state: this folder's `PROJECT-STATE.md`, `OPEN-LOOPS.md`, `WORKSTREAMS.md`, `DECISIONS.md`, `CONSTRAINTS.md`, `EVIDENCE-INDEX.md` and `LESSONS-AND-REJECTED-PATHS.md`.
 - Completed Qwen/LM Studio source integration: `workstreams/qwen-lmstudio/CURRENT-FOCUS.md` and `workstreams/qwen-lmstudio/MERGE-CLOSURE.md`.
 - Completed FHM-004 bounded supervisor and crash recovery: `workstreams/reliability/CURRENT-FOCUS.md` and `../reliability/EVIDENCE-JOURNAL.md`.
+- Open FHM-005 fail-closed verification implementation: `workstreams/reliability/FHM-005-PHASE-1.md` (DEC-004 approved, draft-only until durability/verifier gates).
 - Delegated Codex/Cursor/other LLM instruction format and safe process launchers: `AGENT-EXECUTION-PROTOCOL.md`.
 - New-chat entrypoint: `NEW-CHAT-BOOTSTRAP.md`.
 - Evidence, source diffs and test results: source commits and issue/PR comments; do not paste large logs into memory files.

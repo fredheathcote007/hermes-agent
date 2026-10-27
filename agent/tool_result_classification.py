@@ -16,12 +16,32 @@ FILE_MUTATING_TOOL_NAMES = frozenset({"write_file", "patch"})
 NO_EFFECT_TOOL_NAMES = frozenset({
     "read_file", "search_files", "session_search", "skill_view", "skills_list",
     "web_extract", "web_search", "vision_analyze", "browser_snapshot",
-    "browser_get_images", "browser_console", "read_terminal",
+    "browser_get_images", "read_terminal",
 })
 
 
 def tool_may_have_side_effect(tool_name: str) -> bool:
     return tool_name not in NO_EFFECT_TOOL_NAMES
+
+
+def terminal_command_is_read_only(command: str) -> bool:
+    """No shell command is certified read-only from its input string alone.
+
+    Executable resolution, shell expansion, configured hooks and arbitrary flags
+    can all produce side effects. FHM-005 must fail closed until a trusted
+    execution/verifier boundary can independently attest the effects.
+    """
+    return False
+
+
+def tool_call_may_have_side_effect(tool_name: str, arguments: Any) -> bool:
+    """Classify a tool call conservatively for delegated completion provenance."""
+    name = str(tool_name or "")
+    if name == "terminal":
+        return True  # Shell commands cannot be proven effect-free from a trace alone.
+    if name == "execute_code":
+        return True
+    return tool_may_have_side_effect(name)
 
 
 # Set by a tool that REFUSED a call the harness judged redundant (repeated identical

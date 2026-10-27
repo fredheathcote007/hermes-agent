@@ -5,7 +5,6 @@ when the model tries to finish right after editing code without fresh evidence."
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -114,6 +113,45 @@ def _verification_snapshot(
     return first_snapshot
 
 
+def verification_unresolved(*, session_id: str | None, changed_paths: Iterable[str]) -> bool:
+    """Fail closed for code edits unless a current same-session Hermes verifier passed.
+
+    Terminal command receipts remain useful diagnostics, but are worker-controlled and
+    cannot serve as independent acceptance evidence. The verifier engine is a separate
+    architecture gate; until then only a recorded full ``hermes verify`` is admissible.
+    """
+    paths = sorted({str(p) for p in changed_paths if p and not _is_non_code_path(str(p))})
+    if not paths:
+        return False
+    try:
+        from agent.coding_context import project_facts_for
+        from agent.verification_evidence import verification_status
+        candidates = _candidate_cwds(paths)
+        if not candidates:
+            return True
+        for cwd in candidates:
+            facts = project_facts_for(cwd)
+            if not facts:
+                return True
+            status = verification_status(session_id=session_id, cwd=cwd)
+            evidence = status.get("evidence") if isinstance(status.get("evidence"), dict) else {}
+            if not (
+                status.get("status") == "passed"
+                and evidence.get("kind") == "verify"
+                and str(evidence.get("session_id") or "") == str(session_id or "default")
+                and evidence.get("scope") == "full"
+            ):
+                return True
+        return False
+    except Exception:  # health: allow BLE001 -- evidence lookup failure is unresolved
+        return True
+
+
+def has_verifiable_paths(changed_paths: Iterable[str]) -> bool:
+    """Match the stop gate's docs-only filter when evidence lookup itself fails."""
+    return any(path and not _is_non_code_path(str(path)) for path in changed_paths)
+
+
 def _format_changed_paths(paths: list[str]) -> str:
     lines = [f"- `{path}`" for path in paths[:_MAX_CHANGED_PATHS_IN_NUDGE]]
     if len(paths) > _MAX_CHANGED_PATHS_IN_NUDGE:
@@ -170,9 +208,14 @@ def build_verify_on_stop_nudge(
     if snapshot is None:
         return None
     status, facts = snapshot
-    if str(status.get("status") or "unverified") == "passed":
+    evidence = status.get("evidence") if isinstance(status.get("evidence"), dict) else {}
+    if (
+        status.get("status") == "passed"
+        and evidence.get("kind") == "verify"
+        and str(evidence.get("session_id") or "") == str(session_id or "default")
+        and evidence.get("scope") == "full"
+    ):
         return None
-    verify_commands = [str(cmd).strip() for cmd in (facts.get("verifyCommands") or []) if str(cmd).strip()]
     has_recipe = _workspace_has_runnable_recipe(facts.get("root"))
 
     # Optional shipped coding guidance, only paid when this evidence gate fires.
@@ -184,36 +227,18 @@ def build_verify_on_stop_nudge(
         guidance = None
     addendum = f"\n\n{guidance}" if guidance else ""
 
-    if verify_commands:
+    if has_recipe:
         command_instruction = (
-            "Run the relevant verification command now ("
-            + ", ".join(f"`{cmd}`" for cmd in verify_commands[:3])
-            + (", ..." if len(verify_commands) > 3 else "")
-            + "), read any failure, repair the code, and summarize what passed."
-        )
-        if has_recipe:
-            command_instruction += (
-                " For a full check including a runtime boot (build + test + "
-                "start + readiness), prefer `hermes verify --json` — a passing "
-                "run records verification evidence for this workspace."
-            )
-    elif has_recipe:
-        command_instruction = (
-            "No canonical test/lint/build command was detected, but the "
-            "project has a runnable verification recipe. Run `hermes verify "
+            "Run the independent Hermes verifier with `hermes verify "
             "--json` (detect -> build -> test -> boot -> readiness poll); a "
-            "passing run records verification evidence for this workspace. "
-            "Read any failure, repair the code, and summarize what passed."
+            "passing full run records verification evidence for this workspace. "
+            "Do not substitute worker-reported command output or logs."
         )
     else:
-        temp_dir = os.path.realpath(tempfile.gettempdir())
         command_instruction = (
-            "No canonical test/lint/build command was detected. Create a focused "
-            f"temporary verification script under `{temp_dir}` using an OS-safe "
-            "`tempfile` path with a `hermes-verify-` filename prefix, run it "
-            "against the changed behavior, clean it up when possible, and "
-            "summarize it explicitly as ad-hoc verification rather than suite "
-            "green."
+            "No independent Hermes verification recipe is available. Do not "
+            "invent or execute a worker-supplied verification command; report "
+            "the verifier as unavailable and do not claim successful completion."
         )
 
     return (
@@ -227,4 +252,4 @@ def build_verify_on_stop_nudge(
     )
 
 
-__all__ = ["build_verify_on_stop_nudge", "verify_on_stop_enabled"]
+__all__ = ["build_verify_on_stop_nudge", "has_verifiable_paths", "verification_unresolved", "verify_on_stop_enabled"]

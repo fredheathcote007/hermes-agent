@@ -7,7 +7,7 @@ Last updated: 2026-10-26 Australia/Perth
 
 | Issue | Priority | Work remaining |
 |---|---|---|
-| [FHM-005](https://github.com/fredheathcote007/hermes-agent/issues/5) | P0 | Independent verification-on-stop and delegated worker evidence |
+| [FHM-005](https://github.com/fredheathcote007/hermes-agent/issues/5) | P0 | Fail-closed approved (DEC-004); phase-one draft covers opt-in verification; P0 durable async state and trusted parent receipts remain |
 | [FHM-006](https://github.com/fredheathcote007/hermes-agent/issues/6) | P1 | Compaction integrity and source-history recovery |
 | [FHM-007](https://github.com/fredheathcote007/hermes-agent/issues/7) | P1 | Hermes-owned Local Memory v2; separate active PR #19 |
 | [FHM-008](https://github.com/fredheathcote007/hermes-agent/issues/8) | P1 | SkillHone-style experience learning |

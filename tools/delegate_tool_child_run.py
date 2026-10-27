@@ -565,6 +565,8 @@ def _build_tool_trace(messages: Any) -> list[dict[str, Any]]:
     tool calls with their results by tool_call_id."""
     tool_trace: list[dict[str, Any]] = []
     trace_by_id: dict[str, dict[str, Any]] = {}
+    from agent.tool_result_classification import tool_call_may_have_side_effect
+
     if not isinstance(messages, list):
         return tool_trace
     for msg in messages:
@@ -577,6 +579,7 @@ def _build_tool_trace(messages: Any) -> list[dict[str, Any]]:
                 entry_t = {
                     "tool": fn.get("name", "unknown"), "args_bytes": len(arguments),
                     "input_summary": _summarize_tool_arguments(arguments),
+                    "effect_capable": tool_call_may_have_side_effect(fn.get("name", "unknown"), arguments),
                 }
                 tool_trace.append(entry_t)
                 if tc.get("id"):
@@ -598,6 +601,35 @@ def _build_result_entry(
     """Parent-visible result entry (status, exit_reason, tool trace, tokens, cost).
     ``status``/``exit_reason``/``truncated`` follow the ``_run_single_child`` contract; a structured failure always
     wins over the summary-presence heuristic (a fallback for legacy/mock results only)."""
+    # Child file tool receipts are captured by the child runtime, then merged into the
+    # owning parent's turn telemetry before the delegate result is returned. A child
+    # success string is not used as evidence; only landed mutation paths are propagated.
+    try:
+        parent_ref = getattr(child, "_delegate_parent_ref", None)
+        parent = getattr(child, "_delegate_verification_owner", None)
+        if parent is None:
+            parent = parent_ref() if callable(parent_ref) else None
+        child_paths = set(getattr(child, "_turn_file_mutation_paths", set()) or ())
+        from tools.delegate_verification import record_child_verification
+
+        record_child_verification(
+            child=child, result=result, task_index=task_index, parent=parent, child_paths=child_paths,
+        )
+    except Exception:
+        # If the owner still exists, make telemetry failure itself observable as
+        # unscoped delegated work so a successful child summary cannot hide it.
+        parent = getattr(child, "_delegate_verification_owner", None)
+        if parent is None:
+            parent_ref = getattr(child, "_delegate_parent_ref", None)
+            parent = parent_ref() if callable(parent_ref) else None
+        if parent is not None:
+            parent._turn_unobservable_delegated_work = True
+            parent._pending_unobservable_delegated_work = True
+        logger.debug("delegate mutation telemetry merge failed", exc_info=True)
+    finally:
+        # Attribution (or its fail-closed fallback) has finished. Keep the weak
+        # ref for lightweight lookup, but don't let a completed child pin its owner.
+        child._delegate_verification_owner = None
     summary = result.get("final_response") or ""
     # "(empty)" is run_agent's give-up sentinel after repeated empty LLM
     # responses (usually a transport bug) — a failure, not a success.
