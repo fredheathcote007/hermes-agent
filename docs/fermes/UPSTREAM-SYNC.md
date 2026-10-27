@@ -69,4 +69,43 @@ Do **not** use an unreviewed Hermes updater to advance a patched checkout; the u
 
 ## Safeguards and follow-up
 
+Use [AGENT-EXECUTION-PROTOCOL.md](memory/AGENT-EXECUTION-PROTOCOL.md) for bounded, non-interactive execution and independent review. Keep upstream changes untrusted until applicability and regression evidence are checked; FHM-011 remains open through comparison, qualification and rollback evidence.
+
+
+## Offline comparison workflow (FHM-011 Step 2)
+
+`scripts/fermes_upstream_compare.py` is an offline, read-only comparison wrapper around the
+installed Git executable. It requires an explicit worktree and three existing local refs:
+
+```bash
+python3 scripts/fermes_upstream_compare.py \
+  --repo /path/to/clean/hermes-agent \
+  --upstream-base bf0203a794a07aac3ff764972ab9087baa4e4f4e \
+  --upstream-target v0.22.5 \
+  --fork fermes/qwen-lmstudio-v0225-20261026 \
+  --format markdown
+```
+
+Use `--format json` for machine-readable reports. The command checks that the path is a Git
+worktree, the checkout is clean, both canonical repository identities are present among the
+configured remotes, refs resolve to commits, and the upstream baseline is an ancestor of both
+comparison targets. It discovers remotes by their URLs; `origin`, `upstream`, and `fork` are not
+special names. It does not fetch, contact GitHub, call an API, merge, checkout, update branches,
+or write a report or any other output into the repository. Git subprocesses use argv directly,
+closed stdin, timeouts, and bounded output.
+
+The report includes resolved commit SHAs, Git descriptions, changed paths and counts, Git
+`patch-id --stable` equivalence evidence, path overlap, deterministic risk-review hints, warnings,
+and a confidence status. Classifications are `exact-equivalent`, `possible-overlap-by-path`,
+`no-overlap`, or `unknown/non-equivalent`. Patch equivalence is not compatibility: every successful
+report has `review_required: true` and `compatibility_status: not-established`. High-risk path
+categories (agent execution, tools, memory, tests, CI, security, and dependencies) are hints for
+human review only; the tool cannot approve a release, establish safety, or authorize deployment.
+
+Limitations: local Git must already contain every supplied ref; no network recovery is attempted.
+Patch IDs do not replace review of semantics, dependencies, migrations, security, tests, or runtime
+behaviour. A dirty checkout, spoofed/missing canonical remote, bad ref, broken ancestry, timeout, or
+bounded-output failure returns nonzero. This workflow performs no merge and does not adopt or deploy
+an upstream release.
+
 Use [AGENT-EXECUTION-PROTOCOL.md](memory/AGENT-EXECUTION-PROTOCOL.md) for bounded tool and independent-review instructions, including non-interactive closed stdin, precise source SHA and stop criteria. Record upstream changes as untrusted inputs until version applicability and regression evidence are checked. FHM-011 remains open until the comparison, deduplication, qualification and rollback workflow are implemented and independently demonstrated.
