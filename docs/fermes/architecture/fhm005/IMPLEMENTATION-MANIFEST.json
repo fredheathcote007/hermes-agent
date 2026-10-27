@@ -108,8 +108,9 @@
         "any"
       ],
       "files": [
-        "agent/verification_receipts.py",
-        "tests/agent/test_verification_receipts.py"
+        "agent/trusted_verifier_receipt_store.py",
+        "tests/agent/test_trusted_verifier_receipt_store.py",
+        "docs/fermes/reliability/FHM-005-RECEIPT-CAS-CANDIDATE.md"
       ],
       "validation": [
         "nonce/authority/policy/freshness binding",
@@ -122,7 +123,20 @@
         "transaction failure tests"
       ],
       "rollback": "Fence the receipt generation and mark all outstanding attempts unknown; do not consume legacy ledger rows.",
-      "gate": "legacy verification_evidence.db remains diagnostic only"
+      "gate": "legacy verification_evidence.db remains diagnostic only",
+      "status": "candidate_model_merged_authority_pending",
+      "candidate_evidence": [
+        "PR #40 merged 6fd54dc4c17831c0c7e0b5fb1627522f6c218384",
+        "73 host tests PASS; Ruff and compile PASS",
+        "independent Cursor original and follow-up report no remaining source-only P0/P1",
+        "exact head hosted CI #40446760100 PASS"
+      ],
+      "unmet_acceptance": [
+        "DR-02 actual parent authentication and same-user impersonation resistance",
+        "DR-04 service-owned receipt persistence, mandatory restart reconcile and commit ambiguity handling",
+        "native Linux and Windows trust-boundary tests",
+        "end-to-end effect observation and fail-closed completion gating"
+      ]
     },
     {
       "id": "FHM005-IMP-004",

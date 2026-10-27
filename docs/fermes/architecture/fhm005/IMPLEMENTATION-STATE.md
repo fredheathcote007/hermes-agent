@@ -1,6 +1,6 @@
 # FHM-005 implementation state
 
-**Status: BLUEPRINT CANDIDATE — IMP-001 contracts and IMP-002 POSIX-only observation source MERGED; Windows/trusted authority NOT qualified.**
+**Status: BLUEPRINT CANDIDATE — IMP-001/002 and IMP-003 source-only model merged; privileged trusted authority and Windows NOT qualified.**
 
 | Field | State |
 | --- | --- |
@@ -50,9 +50,16 @@ and [DECISIONS.md](../../memory/DECISIONS.md). This candidate does not edit thos
 - Project Coordinator: **82 focused tests PASS**, Ruff and compile PASS; exact-head hosted CI [#40443854739](https://github.com/fredheathcote007/hermes-agent/actions/runs/40443854739) PASS. Independent Cursor initial+follow-up review completed; all identified source-only P1 and test hardening resolved.
 - **NOT qualified:** native Windows reparse/junction and volume/file identity, same-device bind mounts, restored TOCTOU, kernel/FUSE I/O hang, forgeable Python observations, or actual effects. Windows path explicitly returns `UNSUPPORTED`. DEC-005 still mandates both OSs for trusted release.
 
-## Next task — FHM005-IMP-003 design and pure receipt-contract qualification
+## IMP-003 source-only receipt transaction model merged — trusted authority still OPEN
 
-Review nonce/authority/policy/freshness binding, durable atomic one-use receipt generation/consume design and crash/replay cases. **The concrete DR-02 same-user-resistant parent authentication and DR-04 protected receipt repository semantics must be approved before implementing an authoritative store or service.** Source-only schemas and red/green tests can be prepared without activating authority. Keep Linux and Windows qualification a joint release gate.
+- [PR #40](https://github.com/fredheathcote007/hermes-agent/pull/40) MERGED at `6fd54dc4c17831c0c7e0b5fb1627522f6c218384`: unprivileged candidate SQLite WAL/FULL receipt lifecycle, bounded BEGIN IMMEDIATE transactions, one-use CAS, foreign/expiry/replay fail-closed states and restart reconciliation primitives. It has **NO runtime wiring, protected access or effect authority**.
+- **73 focused host tests PASS**, Ruff/compile PASS; independent Cursor original and recheck no remaining source-only P0/P1 (initial reported UNIQUE/correlation P1 disproved and tested). Exact-head hosted [CI #40446760100](https://github.com/fredheathcote007/hermes-agent/actions/runs/40446760100) PASS.
+- [IMP-003 issue #36](https://github.com/fredheathcote007/hermes-agent/issues/36) remains OPEN P0 for protected store issuance, authenticated parent, mandatory restart reconciliation, native dual-platform qualification, integration and operational proof. Do not confuse candidate `consumed` with trusted `VERIFIED`.
+- [Linux sandbox security issue #38](https://github.com/fredheathcote007/hermes-agent/issues/38) OPEN P0: Ubuntu 26.04 installed Bubblewrap 0.11.1-1ubuntu0.3 is not acceptable without qualifying its vulnerability applicability/mitigation. [Draft PR #39](https://github.com/fredheathcote007/hermes-agent/pull/39) records the required security gate; no host package changes.
+
+## Next: resolve remaining security architecture approval gates
+
+DR-02 concrete same-user-resistant parent identity and DR-04 protected receipt storage/issuance, including receipt state ownership and crash handling, remain **unapproved**. DR-03 and DR-05–07 must then be resolved before protected controller/service deployment. Source-only tests are not a native Linux/Windows trusted-verifier qualification. Retain manual/external fallback, no uncertain-effect replay and no FHM-007 writes.
 
 
 ## Gates before each expansion
