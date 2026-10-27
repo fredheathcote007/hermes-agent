@@ -197,3 +197,8 @@ qualification produces a clear manual/external path:
 6. propagate the resolution consistently to CLI, TUI, gateway, desktop, and ACP.
 
 The fallback is a safety behavior, not a trusted-verifier PASS and not a reason to weaken DEC-004.
+
+## 12. Linux sandbox dependency gate
+
+Before any hostile-worker Linux lane, apply the [sandbox dependency security gate](SANDBOX-DEPENDENCY-SECURITY-20261027.md).
+The current Ubuntu bubblewrap inventory is a host preflight only; it is not a hostile-worker PASS.
