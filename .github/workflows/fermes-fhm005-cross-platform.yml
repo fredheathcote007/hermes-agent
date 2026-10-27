@@ -46,6 +46,7 @@ jobs:
         run: |
           $testFiles = @(
             'tests/agent/test_trusted_verifier_controller_protocol.py',
+            'tests/agent/test_trusted_verifier_native_peer_probe.py',
             'tests/agent/test_trusted_verifier_handshake_model.py',
             'tests/agent/test_trusted_verifier_contract.py',
             'tests/agent/test_trusted_verifier_attempt.py',
@@ -67,6 +68,7 @@ jobs:
             'agent/trusted_verifier_controller_protocol.py',
             'agent/trusted_verifier_handshake_model.py',
             'tests/agent/test_trusted_verifier_controller_protocol.py',
+            'tests/agent/test_trusted_verifier_native_peer_probe.py',
             'tests/agent/test_trusted_verifier_handshake_model.py'
           )
           foreach ($file in $files) {
