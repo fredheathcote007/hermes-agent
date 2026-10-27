@@ -353,7 +353,7 @@ class AttemptState:
             AttemptEventKind.EVIDENCE_OBSERVED: (frozenset({AttemptStatus.RUNNING, AttemptStatus.EVIDENCE_OBSERVED}), AttemptStatus.EVIDENCE_OBSERVED, AttemptEventSource.CONTROLLER),
             AttemptEventKind.AWAIT_VERIFICATION: (frozenset({AttemptStatus.RUNNING, AttemptStatus.EVIDENCE_OBSERVED, AttemptStatus.AWAITING_VERIFICATION}), AttemptStatus.AWAITING_VERIFICATION, AttemptEventSource.CONTROLLER),
             AttemptEventKind.TRUSTED_VERIFIED: (frozenset({AttemptStatus.AWAITING_VERIFICATION, AttemptStatus.VERIFIED_ACCEPTED}), AttemptStatus.VERIFIED_ACCEPTED, AttemptEventSource.TRUSTED_VERIFIER),
-            AttemptEventKind.WORKER_FAILED: (frozenset(_ACTIVE - {AttemptStatus.REQUESTED, AttemptStatus.UNKNOWN_INCOMPLETE}), AttemptStatus.REJECTED_FAILED, AttemptEventSource.WORKER),
+            AttemptEventKind.WORKER_FAILED: (frozenset({AttemptStatus.RESERVED, AttemptStatus.RUNNING, AttemptStatus.REJECTED_FAILED}), AttemptStatus.REJECTED_FAILED, AttemptEventSource.WORKER),
             AttemptEventKind.CONTROLLER_REJECT: (_ACTIVE | {AttemptStatus.REJECTED_FAILED}, AttemptStatus.REJECTED_FAILED, AttemptEventSource.CONTROLLER),
             AttemptEventKind.WORKER_UNKNOWN: (frozenset({*(_ACTIVE - {AttemptStatus.REQUESTED}), AttemptStatus.UNKNOWN_INCOMPLETE}), AttemptStatus.UNKNOWN_INCOMPLETE, AttemptEventSource.WORKER),
             AttemptEventKind.INTERRUPT_CANCEL: (_ACTIVE | {AttemptStatus.INTERRUPTED_CANCELLED}, AttemptStatus.INTERRUPTED_CANCELLED, AttemptEventSource.CONTROLLER),

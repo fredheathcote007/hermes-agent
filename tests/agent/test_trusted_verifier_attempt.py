@@ -345,3 +345,17 @@ def test_forged_proof_for_another_attempt_cannot_authorize_completion():
                    AttemptEventSource.TRUSTED_VERIFIER, proof=forged_proof),
             now=NOW,
         )
+
+
+@pytest.mark.parametrize("phase", [AttemptStatus.EVIDENCE_OBSERVED, AttemptStatus.AWAITING_VERIFICATION])
+def test_late_worker_failure_cannot_override_controller_evidence_phase(phase):
+    state = _running_state()
+    state = state.apply(_event(state, AttemptEventKind.EVIDENCE_OBSERVED,
+                               AttemptEventSource.CONTROLLER), now=NOW)
+    if phase is AttemptStatus.AWAITING_VERIFICATION:
+        state = state.apply(_event(state, AttemptEventKind.AWAIT_VERIFICATION,
+                                   AttemptEventSource.CONTROLLER), now=NOW)
+    with pytest.raises(AttemptContractError, match="not allowed"):
+        state.apply(_event(state, AttemptEventKind.WORKER_FAILED,
+                           AttemptEventSource.WORKER), now=NOW)
+    assert state.status is phase
