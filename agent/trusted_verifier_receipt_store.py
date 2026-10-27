@@ -9,7 +9,9 @@ receipt payload, command, output, credential, or provenance flag.
 The database is suitable for local POSIX/NTFS experiments when its directory
 is protected by the eventual controller.  SQLite cannot provide the same
 durability or locking claim on an arbitrary remote filesystem, so this module
-does not make that claim.  A successful consume result is only a candidate
+does not make that claim. Existing databases require explicit restart
+reconciliation or an independently controller-approved live-generation join
+before issue or consume. A successful consume result is only a candidate
 store transition and must never be used as trusted completion.
 """
 
@@ -19,7 +21,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -48,6 +50,10 @@ class CandidateReceiptStoreError(RuntimeError):
 
 class CandidateReceiptStoreClosed(CandidateReceiptStoreError):
     """The candidate store has already been closed or invalidated."""
+
+
+class CandidateReceiptStoreNotReady(CandidateReceiptStoreError):
+    """An existing store requires explicit restart reconciliation or joining."""
 
 
 class CandidateReceiptStoreSchemaError(CandidateReceiptStoreError):
@@ -166,8 +172,18 @@ def _validate_request(request: object) -> VerificationRequest:
     return request
 
 
+def _commit(connection: sqlite3.Connection) -> None:
+    """Small seam for deterministic commit-outcome fault injection in tests."""
+
+    connection.commit()
+
+
 @contextmanager
-def _transaction(connection: sqlite3.Connection) -> Iterator[None]:
+def _transaction(
+    connection: sqlite3.Connection,
+    *,
+    on_commit_failure: Callable[[], None] | None = None,
+) -> Iterator[None]:
     """Run one bounded writer transaction and roll back every failed body."""
 
     try:
@@ -185,12 +201,15 @@ def _transaction(connection: sqlite3.Connection) -> Iterator[None]:
             raise CandidateReceiptStoreError("candidate store rollback failed") from rollback_error
         raise
     try:
-        connection.commit()
+        _commit(connection)
     except BaseException as exc:
         # The commit outcome is not safely knowable to a caller.  Close this
         # connection so a caller cannot accidentally retry on a stale handle.
         try:
-            connection.close()
+            if on_commit_failure is None:
+                connection.close()
+            else:
+                on_commit_failure()
         finally:
             raise CandidateReceiptStoreError("candidate store commit outcome is ambiguous") from exc
 
@@ -212,6 +231,8 @@ class CandidateReceiptStore:
         self.db_path = self._validate_db_path(db_path)
         self._busy_timeout_ms = busy_timeout_ms
         self._connection: sqlite3.Connection | None = None
+        self._reconcile_required = False
+        self._joined_generation: int | None = None
         try:
             self._connection = sqlite3.connect(
                 str(self.db_path), timeout=busy_timeout_ms / 1000, isolation_level=None,
@@ -223,7 +244,8 @@ class CandidateReceiptStore:
             if str(journal_mode).lower() != "wal":
                 raise CandidateReceiptStoreSchemaError("candidate store requires SQLite WAL mode")
             self._connection.execute("PRAGMA synchronous=FULL")
-            self._initialize_schema()
+            schema_created = self._initialize_schema()
+            self._reconcile_required = not schema_created
         except CandidateReceiptStoreError:
             self.close()
             raise
@@ -240,13 +262,18 @@ class CandidateReceiptStore:
             raise CandidateReceiptStoreInputError("db_path must be absolute")
         if path.exists() and path.is_symlink():
             raise CandidateReceiptStoreInputError("db_path must not be a symlink")
+        parent = path.parent
+        while parent != parent.parent:
+            if parent.is_symlink():
+                raise CandidateReceiptStoreInputError("db_path parent must not contain symlinks")
+            parent = parent.parent
         if not path.parent.is_dir():
             raise CandidateReceiptStoreInputError("db_path parent directory must already exist")
         if path.exists() and not path.is_file():
             raise CandidateReceiptStoreInputError("db_path must name a regular file")
         return path
 
-    def _initialize_schema(self) -> None:
+    def _initialize_schema(self) -> bool:
         connection = self._connection_or_raise()
         user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         tables = frozenset(
@@ -266,7 +293,7 @@ class CandidateReceiptStore:
             ))
             if columns != _EXPECTED_COLUMNS:
                 raise CandidateReceiptStoreSchemaError("candidate store columns are unsupported")
-            return
+            return False
         with _transaction(connection):
             connection.execute(
                 """CREATE TABLE candidate_receipts (
@@ -298,11 +325,54 @@ class CandidateReceiptStore:
                 "ON candidate_receipts (state, expires_at)",
             )
             connection.execute("PRAGMA user_version=1")
+        return True
 
     def _connection_or_raise(self) -> sqlite3.Connection:
         if self._connection is None:
             raise CandidateReceiptStoreClosed("candidate store is closed")
         return self._connection
+
+    @property
+    def reconcile_required(self) -> bool:
+        """Whether an existing database needs an explicit startup decision."""
+
+        return self._reconcile_required
+
+    @classmethod
+    def open_for_live_generation(
+        cls, db_path: str | Path, *, generation: int, busy_timeout_ms: int = 250,
+    ) -> Self:
+        """Open after a controller has independently established a live generation.
+
+        This is an explicit, non-authenticating join gate for concurrent users of
+        a still-live process generation.  It does not establish trust or prove
+        that the caller owns the database; a protected controller must make that
+        decision before calling this API.
+        """
+
+        store = cls(db_path, busy_timeout_ms=busy_timeout_ms)
+        store.join_existing_live_generation(generation=generation)
+        return store
+
+    def join_existing_live_generation(self, *, generation: int) -> None:
+        """Leave the startup barrier for a controller-approved live generation."""
+
+        _validate_generation(generation)
+        self._connection_or_raise()
+        self._joined_generation = generation
+        self._reconcile_required = False
+
+    def _ready_connection(self) -> sqlite3.Connection:
+        connection = self._connection_or_raise()
+        if self._reconcile_required:
+            raise CandidateReceiptStoreNotReady(
+                "existing candidate store requires reconcile_after_restart or explicit live-generation join",
+            )
+        return connection
+
+    def _check_joined_generation(self, generation: int) -> None:
+        if self._joined_generation is not None and generation != self._joined_generation:
+            raise CandidateReceiptStoreInputError("candidate generation is outside the joined live generation")
 
     def issue(
         self,
@@ -314,9 +384,11 @@ class CandidateReceiptStore:
     ) -> CandidateReceipt:
         """Atomically issue one candidate row, rejecting duplicate identity."""
 
+        self._connection_or_raise()
         request = _validate_request(request)
         root_digest = _validate_digest(root_digest, "root_digest")
         generation = _validate_generation(generation)
+        self._check_joined_generation(generation)
         current = _utc(now if now is not None else datetime.now(UTC), "now")
         if current >= request.expires_at:
             raise CandidateReceiptStoreInputError("cannot issue an expired request")
@@ -324,9 +396,9 @@ class CandidateReceiptStore:
             request=request, root_digest=root_digest, generation=generation,
             issued_at=current, expires_at=request.expires_at,
         )
-        connection = self._connection_or_raise()
+        connection = self._ready_connection()
         try:
-            with _transaction(connection):
+            with _transaction(connection, on_commit_failure=self.close):
                 connection.execute(
                     """
                     INSERT INTO candidate_receipts (
@@ -363,13 +435,20 @@ class CandidateReceiptStore:
     ) -> CandidateConsumeResult:
         """Conditionally consume a candidate once, never returning trusted proof."""
 
+        self._connection_or_raise()
         if not isinstance(candidate, CandidateReceipt):
             raise CandidateReceiptStoreInputError("candidate is invalid")
         current = _utc(now if now is not None else datetime.now(UTC), "now")
+        self._check_joined_generation(candidate.generation)
+        if current < _utc(candidate.issued_at, "issued_at"):
+            return CandidateConsumeResult(
+                status=CandidateConsumeStatus.INCOMPLETE,
+                reason="clock_rollback",
+            )
         request = candidate.request
-        connection = self._connection_or_raise()
+        connection = self._ready_connection()
         try:
-            with _transaction(connection):
+            with _transaction(connection, on_commit_failure=self.close):
                 self._expire_rows(connection, current)
                 cursor = connection.execute(
                     """
@@ -439,7 +518,10 @@ class CandidateReceiptStore:
                 status=CandidateConsumeStatus.INCOMPLETE,
                 reason="foreign_or_mismatched_identity",
             )
-        state = CandidateState(row["state"])
+        try:
+            state = CandidateState(row["state"])
+        except (TypeError, ValueError) as exc:
+            raise CandidateReceiptStoreError("candidate store contains an invalid row state") from exc
         if state is CandidateState.CONSUMED:
             reason = "replay"
         elif state is CandidateState.EXPIRED:
@@ -464,7 +546,7 @@ class CandidateReceiptStore:
         current = _utc(now if now is not None else datetime.now(UTC), "now")
         connection = self._connection_or_raise()
         try:
-            with _transaction(connection):
+            with _transaction(connection, on_commit_failure=self.close):
                 self._expire_rows(connection, current)
                 cursor = connection.execute(
                     """
@@ -474,6 +556,7 @@ class CandidateReceiptStore:
                     (_wire_time(current),),
                 )
                 count = cursor.rowcount
+            self._reconcile_required = False
         except sqlite3.OperationalError as exc:
             if "locked" in str(exc).lower() or "busy" in str(exc).lower():
                 raise CandidateReceiptStoreBusy("candidate store reconciliation lock wait expired") from exc
@@ -521,6 +604,7 @@ __all__ = [
     "CandidateReceiptStoreConflict",
     "CandidateReceiptStoreError",
     "CandidateReceiptStoreInputError",
+    "CandidateReceiptStoreNotReady",
     "CandidateReceiptStoreSchemaError",
     "CandidateState",
 ]

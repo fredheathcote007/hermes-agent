@@ -26,6 +26,7 @@ from agent.trusted_verifier_receipt_store import (
     CandidateReceiptStoreConflict,
     CandidateReceiptStoreError,
     CandidateReceiptStoreInputError,
+    CandidateReceiptStoreNotReady,
     CandidateReceiptStoreSchemaError,
     CandidateState,
 )
@@ -67,7 +68,9 @@ def _issue(store, request=None, **changes):
 
 def _consume_child(db_path: str, barrier, output) -> None:
     request = _request()
-    store = CandidateReceiptStore(db_path, busy_timeout_ms=1000)
+    store = CandidateReceiptStore.open_for_live_generation(
+        db_path, generation=7, busy_timeout_ms=1000,
+    )
     candidate = CandidateReceipt(
         request=request,
         root_digest=ROOT_DIGEST,
@@ -169,7 +172,13 @@ def test_restart_reconciliation_marks_uncertain_work_unknown_without_auto_resume
     first.close()
 
     with CandidateReceiptStore(db_path) as restarted:
+        assert restarted.reconcile_required
+        with pytest.raises(CandidateReceiptStoreNotReady):
+            _issue(restarted, request=_request(attempt_id="attempt-after-restart"))
+        with pytest.raises(CandidateReceiptStoreNotReady):
+            restarted.consume(candidate, now=NOW + timedelta(seconds=1))
         assert restarted.reconcile_after_restart(now=NOW + timedelta(seconds=1)) == 1
+        assert not restarted.reconcile_required
         result = restarted.consume(candidate, now=NOW + timedelta(seconds=2))
         assert result.status is CandidateConsumeStatus.INCOMPLETE
         assert result.reason == "unknown_after_restart_reconciliation"
@@ -178,6 +187,38 @@ def test_restart_reconciliation_marks_uncertain_work_unknown_without_auto_resume
             "SELECT state FROM candidate_receipts",
         ).fetchone()[0]
         assert state == CandidateState.UNKNOWN_INCOMPLETE.value
+
+
+def test_live_generation_join_rejects_issue_and_consume_from_other_generation(tmp_path):
+    db_path = tmp_path / "candidate.db"
+    first = CandidateReceiptStore(db_path)
+    candidate = _issue(first, generation=7)
+    first.close()
+
+    with CandidateReceiptStore.open_for_live_generation(db_path, generation=8) as joined:
+        with pytest.raises(CandidateReceiptStoreInputError, match="joined live generation"):
+            _issue(
+                joined,
+                request=_request(attempt_id="attempt-generation-mismatch"),
+                generation=7,
+            )
+        with pytest.raises(CandidateReceiptStoreInputError, match="joined live generation"):
+            joined.consume(candidate, now=NOW + timedelta(seconds=1))
+
+
+def test_live_generation_join_can_unsafe_bypass_restart_fence(tmp_path):
+    """Document the caller-controlled bypass; never expose it to routine workers."""
+    db_path = tmp_path / "candidate.db"
+    first = CandidateReceiptStore(db_path)
+    candidate = _issue(first)
+    first.close()
+
+    # This deliberately skips reconciliation for an existing issued row. It is
+    # unsafe unless a future protected controller authenticates live generation
+    # out of band; otherwise the controller must remove this API and reconcile.
+    with CandidateReceiptStore.open_for_live_generation(db_path, generation=7) as joined:
+        assert not joined.reconcile_required
+        assert joined.consume(candidate, now=NOW + timedelta(seconds=1)).consumed
 
 
 def test_simultaneous_process_consumption_has_at_most_one_winner(tmp_path):
@@ -234,10 +275,85 @@ def test_sqlite_error_rolls_back_and_close_is_complete(tmp_path):
         store.consume(candidate)
 
 
+def test_ambiguous_commit_invalidates_instance_and_does_not_reuse_handle(tmp_path, monkeypatch):
+    db_path = tmp_path / "candidate.db"
+    store = CandidateReceiptStore(db_path)
+
+    def fail_commit(_connection):
+        raise sqlite3.OperationalError("injected ambiguous commit failure")
+
+    monkeypatch.setattr("agent.trusted_verifier_receipt_store._commit", fail_commit)
+    with pytest.raises(CandidateReceiptStoreError, match="ambiguous"):
+        _issue(store)
+    assert store._connection is None
+    with pytest.raises(CandidateReceiptStoreClosed):
+        _issue(store, request=_request(attempt_id="retry"))
+    assert sqlite3.connect(db_path).execute(
+        "SELECT count(*) FROM candidate_receipts",
+    ).fetchone()[0] == 0
+
+
+def test_ambiguous_consume_commit_closes_store(tmp_path, monkeypatch):
+    db_path = tmp_path / "candidate.db"
+    store = CandidateReceiptStore(db_path)
+    candidate = _issue(store)
+
+    def fail_commit(_connection):
+        raise sqlite3.OperationalError("injected ambiguous commit failure")
+
+    monkeypatch.setattr("agent.trusted_verifier_receipt_store._commit", fail_commit)
+    with pytest.raises(CandidateReceiptStoreError, match="ambiguous"):
+        store.consume(candidate, now=NOW + timedelta(seconds=1))
+    with pytest.raises(CandidateReceiptStoreClosed):
+        store.consume(candidate, now=NOW + timedelta(seconds=2))
+
+
+def test_clock_rollback_never_consumes_an_issued_candidate(tmp_path):
+    with CandidateReceiptStore(tmp_path / "candidate.db") as store:
+        candidate = _issue(store)
+        result = store.consume(candidate, now=NOW - timedelta(seconds=1))
+        assert result.status is CandidateConsumeStatus.INCOMPLETE
+        assert result.reason == "clock_rollback"
+        assert store.consume(candidate, now=NOW + timedelta(seconds=1)).consumed
+
+
+def test_corrupted_row_state_fails_closed_without_raw_value_error(tmp_path):
+    db_path = tmp_path / "candidate.db"
+    with CandidateReceiptStore(db_path) as store:
+        candidate = _issue(store)
+        connection = sqlite3.connect(db_path)
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute("UPDATE candidate_receipts SET state='corrupt'")
+        connection.commit()
+        connection.close()
+        with pytest.raises(CandidateReceiptStoreError, match="invalid row state"):
+            store.consume(candidate, now=NOW + timedelta(seconds=1))
+
+
+def test_parent_symlink_is_rejected(tmp_path):
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    symlink_parent = tmp_path / "linked"
+    symlink_parent.symlink_to(real_parent, target_is_directory=True)
+    with pytest.raises(CandidateReceiptStoreInputError, match="parent"):
+        CandidateReceiptStore(symlink_parent / "candidate.db")
+
+
 def test_schema_version_is_explicit_and_unknown_schema_fails_closed(tmp_path):
     db_path = tmp_path / "candidate.db"
     connection = sqlite3.connect(db_path)
     connection.execute("PRAGMA user_version=99")
+    connection.close()
+    with pytest.raises(CandidateReceiptStoreSchemaError):
+        CandidateReceiptStore(db_path)
+
+
+def test_malformed_schema_columns_fail_closed(tmp_path):
+    db_path = tmp_path / "candidate.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute("CREATE TABLE candidate_receipts (row_id INTEGER PRIMARY KEY)")
+    connection.execute("PRAGMA user_version=1")
+    connection.commit()
     connection.close()
     with pytest.raises(CandidateReceiptStoreSchemaError):
         CandidateReceiptStore(db_path)
