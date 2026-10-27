@@ -36,7 +36,8 @@ def test_known_good_file_returns_request_bound_identity(tmp_path):
     )
 
     assert observed.relative_path == "nested/result.txt"
-    assert (observed.device, observed.inode) == (root_identity.device, observed.inode)
+    assert observed.device == root_identity.device
+    assert observed.inode == (root / "nested/result.txt").stat().st_ino
     assert observed.size == len(content)
     assert observed.sha256 == hashlib.sha256(content).hexdigest()
     assert observed.contract_digest == "sha256:" + hashlib.sha256(content).hexdigest()
@@ -309,3 +310,43 @@ def test_relative_root_and_noncanonical_unicode_fail_closed(tmp_path):
         artifacts.scan_artifact(root, "bad\u202epath.txt", session_id="s", attempt_id="a")
     with pytest.raises(artifacts.ArtifactScanError, match="ambiguous Unicode"):
         artifacts.scan_artifact(root, "e\u0301.txt", session_id="s", attempt_id="a")
+
+
+def test_growth_during_file_read_fails_closed(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    target = _write(root, "result.txt", b"original")
+    real_read = artifacts.os.read
+    changed = False
+
+    def grow_after_first_read(fd, size):
+        nonlocal changed
+        data = real_read(fd, size)
+        if data and not changed:
+            changed = True
+            with target.open("ab") as stream:
+                stream.write(b"EXTRA")
+        return data
+
+    monkeypatch.setattr(artifacts.os, "read", grow_after_first_read)
+    with pytest.raises(artifacts.ArtifactScanError, match="grew"):
+        artifacts.scan_artifact(root, "result.txt", session_id="s", attempt_id="a")
+
+
+def test_noncanonical_root_unicode_fails_closed(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    for suffix in ("\u202e", "e\u0301"):
+        with pytest.raises(artifacts.ArtifactScanError, match="ambiguous Unicode"):
+            artifacts.identify_root(str(root) + suffix)
+
+
+def test_noncanonical_session_and_attempt_identifiers_fail_closed(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    _write(root, "result.txt")
+    for field in ("session_id", "attempt_id"):
+        for bad in ("evil\u202eid", "e\u0301"):
+            kwargs = {"session_id": "s", "attempt_id": "a", field: bad}
+            with pytest.raises(artifacts.ArtifactScanError, match="canonical identifier"):
+                artifacts.scan_artifact(root, "result.txt", **kwargs)

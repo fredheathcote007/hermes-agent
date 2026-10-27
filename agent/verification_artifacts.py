@@ -59,7 +59,8 @@ _DIGEST_LENGTH = hashlib.sha256().digest_size * 2
 def _identifier(value: object, field: str) -> str:
     if not isinstance(value, str) or not value or len(value) > _MAX_IDENTIFIER_LENGTH:
         raise ArtifactScanError(f"{field} must be a bounded non-empty string")
-    if value != value.strip() or any(ord(char) < 32 for char in value):
+    if (value != value.strip() or unicodedata.normalize("NFC", value) != value
+            or any(ord(char) < 32 or unicodedata.category(char) == "Cf" for char in value)):
         raise ArtifactScanError(f"{field} is not a canonical identifier")
     return value
 

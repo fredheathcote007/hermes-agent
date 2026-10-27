@@ -55,3 +55,7 @@ readback before any trust claim could be considered.
 - `ArtifactIdentity.contract_digest` is only a `sha256:`-prefixed presentation helper for the pre-existing request/receipt shape; it is not independently authenticated proof, and it is never sufficient to retire a pending memory or delegated effect.
 - The filesystem test guard wraps `os.open` and `os.stat`; checking the underlying registered descriptor capability via `inspect.unwrap` accommodates this isolated test environment without bypassing `dir_fd`, `O_NOFOLLOW` or pre/post inode checks.
 - The scan has a byte ceiling but **no guaranteed elapsed-time bound** on a stalled kernel or FUSE/NFS read. Same-device bind mounts and races fully restored between observations cannot be ruled out. These require protected controller policy, sandbox timeouts, quiescence and native Linux/Windows qualification before any security/availability claims. Windows remains explicitly `UNSUPPORTED`, not PASS.
+
+## Independent Cursor exact-commit review remediation
+
+Cursor's independent PR #33 review identified noncanonical Unicode session/attempt IDs, a weak device/inode assertion, and absent growth/root Unicode negative cases. The follow-up now rejects non-NFC and Unicode formatting controls in request labels, strengthens object identity assertions and tests growth during reads and malformed Unicode roots. Remaining P1 risks (same-device bind mounts, caller-constructed objects, and lack of guaranteed kernel I/O timeout) remain explicit non-authoritative/future-controller gates, not accepted security proof.
