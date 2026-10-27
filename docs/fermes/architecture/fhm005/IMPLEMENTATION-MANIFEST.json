@@ -1,0 +1,583 @@
+{
+  "schema_version": 1,
+  "project_id": "fermes-hermes",
+  "issue": "FHM-005",
+  "status": "CANDIDATE_NOT_APPROVED",
+  "baseline": {
+    "branch": "fermes/fhm005-detailed-design-20261027",
+    "sha": "120d7e3241621a72b66a5d09c25cb23d707f5ceb",
+    "source_prs": [
+      21,
+      22
+    ],
+    "draft_prs_not_merged": [
+      23,
+      24
+    ]
+  },
+  "invariants": [
+    "DEC-004: missing, failed, stale, untrusted, or unobservable proof is never success",
+    "DEC-005: native Linux and native Windows are both required for one qualified trusted release",
+    "DEC-006: compromised unprivileged workers are in scope; local root/Administrator is out of scope",
+    "trusted_mode_is_opt_in_and_never_default_on",
+    "manual_or_external_attestation_is_the_fail_closed_fallback",
+    "no_automatic_replay_of_uncertain_external_effects",
+    "FHM-007_remains_separate"
+  ],
+  "tasks": [
+    {
+      "id": "FHM005-IMP-001",
+      "title": "Define pure DTO, status, and monotonic state-machine contract",
+      "priority": "P0",
+      "depends_on": [],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/trusted_verifier_contract.py",
+        "tests/agent/test_trusted_verifier_contract.py",
+        "docs/fermes/reliability/FHM-005-TRUSTED-VERIFICATION-CONTRACT.md"
+      ],
+      "validation": [
+        "pure unit tests for DTO validation and every legal/illegal transition",
+        "property tests for sticky unknown and one-use terminal states"
+      ],
+      "evidence": [
+        "test output on exact candidate SHA",
+        "serialized contract examples",
+        "no OS/service dependency"
+      ],
+      "rollback": "Delete only the unreferenced contract module; retain current opt-in fail-closed path.",
+      "gate": "Pure receipt contract started on branch fermes/fhm005-verifier-protocol-20261027 (e2680265); complete monotonic state-machine contract and independent review before marking task complete. No production wiring or trusted authority.",
+      "status": "completed_source_only",
+      "completed_evidence": [
+        "PR #26 merged 5dbb12ca (host 77 pass, exact-head CI success, independent Cursor)",
+        "PR #31 merged d8d4884f (host 56 pass, exact-head CI #40438572424 success, independent Codex P1 fixed)",
+        "Issue #27 completed"
+      ]
+    },
+    {
+      "id": "FHM005-IMP-002",
+      "title": "Specify canonical root and artifact identity/digest rules",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-001"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/verification_artifacts.py",
+        "tests/agent/test_verification_artifacts.py"
+      ],
+      "validation": [
+        "object identity and SHA-256 binding tests",
+        "symlink/hardlink/rename/mount/reparse fixtures fail closed",
+        "cross-session scope cannot mutate another attempt"
+      ],
+      "evidence": [
+        "before/post artifact identity records",
+        "negative race test results"
+      ],
+      "rollback": "Keep artifact module unused and fall back to manual/external verification.",
+      "gate": "no trusted receipt may omit exact scope and artifact binding",
+      "status": "posix_source_only_merged_windows_native_pending",
+      "completed_evidence": [
+        "PR #33 merged b5c3cf9ad2c5fd26747aac4582968fcef9e6d12d",
+        "82 focused host tests PASS; Ruff and Python compile PASS",
+        "Independent Cursor exact head + follow-up no source-only P0/P1",
+        "Hosted exact-head CI #40443854739 PASS",
+        "Issue #35: source-only POSIX qualification and test evidence"
+      ],
+      "outstanding_release_gates": [
+        "Native Windows reparse-safe volume/file-ID support and negative tests unimplemented",
+        "Same-device bind mounts and restored TOCTOU cannot be ruled out",
+        "No guaranteed kernel/FUSE/NFS I/O wall-clock bound",
+        "Observation DTO is untrusted and not controller/receipt authority"
+      ]
+    },
+    {
+      "id": "FHM005-IMP-003",
+      "title": "Implement immutable attempt and protected receipt repository contract",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-001",
+        "FHM005-IMP-002"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/trusted_verifier_receipt_store.py",
+        "tests/agent/test_trusted_verifier_receipt_store.py",
+        "docs/fermes/reliability/FHM-005-RECEIPT-CAS-CANDIDATE.md"
+      ],
+      "validation": [
+        "nonce/authority/policy/freshness binding",
+        "atomic issue/consume CAS",
+        "replay, foreign, stale, malformed, and generation mismatch rejection",
+        "crash-point model tests"
+      ],
+      "evidence": [
+        "receipt schema and state-transition report",
+        "transaction failure tests"
+      ],
+      "rollback": "Fence the receipt generation and mark all outstanding attempts unknown; do not consume legacy ledger rows.",
+      "gate": "legacy verification_evidence.db remains diagnostic only",
+      "status": "candidate_model_merged_authority_pending",
+      "candidate_evidence": [
+        "PR #40 merged 6fd54dc4c17831c0c7e0b5fb1627522f6c218384",
+        "73 host tests PASS; Ruff and compile PASS",
+        "independent Cursor original and follow-up report no remaining source-only P0/P1",
+        "exact head hosted CI #40446760100 PASS",
+        "PR #42 merged 245b19dc: receipt model reopen barrier, ambiguous commit fail-closed; 114 focused host tests, Cursor exact-head review and CI #40449660701 PASS"
+      ],
+      "unmet_acceptance": [
+        "DR-02 actual parent authentication and same-user impersonation resistance",
+        "DR-04 service-owned receipt persistence, mandatory restart reconcile and commit ambiguity handling",
+        "native Linux and Windows trust-boundary tests",
+        "end-to-end effect observation and fail-closed completion gating",
+        "Unauthenticated live-generation join MUST NOT be usable to skip restart fence in trusted controller",
+        "Service-owned DB, authenticated parent, native Linux and Windows effect/replay tests remain unqualified"
+      ]
+    },
+    {
+      "id": "FHM005-IMP-004",
+      "title": "Define controller protocol and strict request authorization",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-001",
+        "FHM005-IMP-003",
+        "FHM005-IMP-002"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/verification_controller_protocol.py",
+        "tests/agent/test_verification_controller_protocol.py"
+      ],
+      "validation": [
+        "unknown-field/size/version/downgrade rejection",
+        "client cannot supply authority, root, verdict, or receipt state",
+        "duplicate and cross-session nonce rejection"
+      ],
+      "evidence": [
+        "protocol vectors",
+        "fuzz/property test results"
+      ],
+      "rollback": "Reject the protocol generation and return verifier_unavailable; retain manual fallback.",
+      "gate": "pure protocol must be stable before native adapters"
+    },
+    {
+      "id": "FHM005-IMP-005",
+      "title": "Build restricted executor abstraction with no controller authority",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-002",
+        "FHM005-IMP-004"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/verification_executor.py",
+        "tests/agent/test_verification_executor_contract.py"
+      ],
+      "validation": [
+        "scrubbed environment and bounded resources",
+        "no receipt-store/secret/IPC access",
+        "malicious recipe and shell-injection behavior remains untrusted",
+        "unknown on missing telemetry"
+      ],
+      "evidence": [
+        "executor policy report",
+        "malicious-worker test evidence"
+      ],
+      "rollback": "Disable trusted executor path and preserve current fail-closed/manual behavior.",
+      "gate": "controller must never execute project-authored shell under its identity"
+    },
+    {
+      "id": "FHM005-IMP-006",
+      "title": "Add Linux system UID, Unix socket peer authentication, and protected state",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-004",
+        "FHM005-IMP-005"
+      ],
+      "platform": [
+        "linux"
+      ],
+      "files": [
+        "hermes_cli/verification_linux.py",
+        "tests/hermes_cli/test_verification_linux_native.py",
+        ".github/workflows/fermes-fhm005-linux.yml"
+      ],
+      "validation": [
+        "native system UID/service installation",
+        "socket owner/mode and peer credential checks",
+        "profile crossover, socket replacement, unit tampering, restart, and upgrade tests",
+        "cgroup/process ownership and cleanup tests"
+      ],
+      "evidence": [
+        "native Linux job artifacts",
+        "service identity and ACL capture",
+        "no skipped/blocked PASS"
+      ],
+      "rollback": "Stop trusted mode, fence generation, preserve unknown, and retain manual/external fallback.",
+      "gate": "Linux native security gate"
+    },
+    {
+      "id": "FHM005-IMP-007",
+      "title": "Add Windows SCM service SID, named-pipe DACL/token authentication, and Job Objects",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-004",
+        "FHM005-IMP-005"
+      ],
+      "platform": [
+        "windows"
+      ],
+      "files": [
+        "hermes_cli/verification_windows.py",
+        "tests/hermes_cli/test_verification_windows_native.py",
+        ".github/workflows/fermes-fhm005-windows.yml"
+      ],
+      "validation": [
+        "native SCM service identity and protected state",
+        "explicit pipe DACL/token/impersonation checks",
+        "Job Object kill-on-close, descendant, reparse-point, lock, restart, and upgrade tests",
+        "reject InteractiveToken/Startup fallback"
+      ],
+      "evidence": [
+        "native Windows job artifacts",
+        "service SID/DACL/Job Object capture",
+        "no simulated/blocked PASS"
+      ],
+      "rollback": "Stop trusted mode, fence generation, preserve unknown, and retain manual/external fallback.",
+      "gate": "Windows native security gate"
+    },
+    {
+      "id": "FHM005-IMP-015",
+      "title": "Fence legacy hermes verify and same-user SQLite receipts as non-authoritative",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-001"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/verification_evidence.py",
+        "agent/verify/runner.py",
+        "hermes_cli/verify_cmd.py",
+        "agent/verification_stop.py",
+        "tests/agent/test_legacy_verifier_untrusted.py"
+      ],
+      "validation": [
+        "legacy worker or hermes verify ok cannot mint trusted source",
+        "cross-session verify cannot retire another session trusted pending",
+        "existing opt-in FHM005 tests remain PASS"
+      ],
+      "evidence": [
+        "exact-SHA negative regression and nonprivileged reviewer findings"
+      ],
+      "rollback": "Disable new trusted path and preserve legacy events as diagnostics only.",
+      "gate": "No privileged controller or production success path accepts same-user ledger rows or shell=True recipe completion."
+    },
+    {
+      "id": "FHM005-IMP-016",
+      "title": "Bind delegate dispatch/late-child outcomes to protected per-attempt controller evidence",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-004",
+        "FHM005-IMP-003",
+        "FHM005-IMP-011",
+        "FHM005-IMP-017"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "tools/delegate_verification.py",
+        "tools/delegate_tool.py",
+        "tools/delegate_tool_child_run.py",
+        "agent/verification_evidence.py",
+        "tests/tools/test_delegate_trusted_receipts.py"
+      ],
+      "validation": [
+        "worker-completed flag or JSON cannot retire trusted marker",
+        "wrong authority, nonce, attempt, root, stale child and late telemetry fail closed",
+        "no uncertain action replay after crash"
+      ],
+      "evidence": [
+        "simulation and disposable genuine Hermes process tests under exact SHA"
+      ],
+      "rollback": "Disable controller bridge, retain durable unknown and current fail-closed behavior.",
+      "gate": "Prove parent success cannot be driven by child result or same-user SQLite alone. Implementation integration cannot run before IMP-008 controller lifecycle; only isolated mapping/unit tests are valid ahead of controller."
+    },
+    {
+      "id": "FHM005-IMP-017",
+      "title": "Build nonprivileged Hermes controller client and authenticated session wiring",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-004"
+      ],
+      "platform": [
+        "linux",
+        "windows"
+      ],
+      "files": [
+        "agent/verification_controller_client.py",
+        "tests/agent/test_verification_controller_client.py",
+        "tests/hermes_cli/test_verification_client_native.py"
+      ],
+      "validation": [
+        "only native verified client identity accepted by future controller",
+        "unavailable/ambiguous IPC returns INCOMPLETE",
+        "socket/pipe impersonation scenarios tested natively"
+      ],
+      "evidence": [
+        "Linux and Windows read-only contract logs and native negative tests"
+      ],
+      "rollback": "Feature-flag off preserves current manual/external fallback.",
+      "gate": "Do not treat client-reported trusted_source as authentication without OS identity evidence."
+    },
+    {
+      "id": "FHM005-IMP-008",
+      "title": "Implement controller lifecycle, quiescence, and crash recovery",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-003",
+        "FHM005-IMP-005",
+        "FHM005-IMP-006",
+        "FHM005-IMP-007",
+        "FHM005-IMP-017"
+      ],
+      "platform": [
+        "linux",
+        "windows"
+      ],
+      "files": [
+        "agent/verification_controller.py",
+        "tests/agent/test_verification_controller_recovery.py",
+        "tests/hermes_cli/test_verification_process_native.py"
+      ],
+      "validation": [
+        "kill parent/controller at arm, spawn, observe, issue, consume",
+        "late child and delayed writer",
+        "PID reuse and survivor detection",
+        "service restart/reboot/logoff",
+        "unknown is sticky and no replay"
+      ],
+      "evidence": [
+        "crash matrix results on both native hosts",
+        "receipt generation and recovery ledger"
+      ],
+      "rollback": "Mark active generation unavailable and all ambiguous attempts unknown; no automatic child replay.",
+      "gate": "durability and containment gate"
+    },
+    {
+      "id": "FHM005-IMP-009",
+      "title": "Integrate finalizer with protected receipt CAS while retaining legacy diagnostics",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-003",
+        "FHM005-IMP-008",
+        "FHM005-IMP-001",
+        "FHM005-IMP-011",
+        "FHM005-IMP-015",
+        "FHM005-IMP-016"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/turn_verification_finalize.py",
+        "agent/verification_evidence.py",
+        "tests/agent/test_verification_finalizer_receipts.py",
+        "tools/delegate_verification.py",
+        "tools/delegate_tool.py",
+        "agent/verification_stop.py",
+        "hermes_cli/verify_cmd.py"
+      ],
+      "validation": [
+        "only exact fresh protected receipt can yield verified",
+        "legacy row/worker output cannot yield verified",
+        "CAS race and late telemetry tests",
+        "profile/session binding and no foreign retirement"
+      ],
+      "evidence": [
+        "finalizer state-contract results",
+        "legacy compatibility regression output"
+      ],
+      "rollback": "Disable protected consumption and return unknown/verifier_unavailable; do not fall back to legacy trusted success.",
+      "gate": "DEC-004 behavior contract"
+    },
+    {
+      "id": "FHM005-IMP-010",
+      "title": "Make CLI/TUI/desktop/gateway/ACP consume one status contract",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-001",
+        "FHM005-IMP-009"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "cli.py",
+        "hermes_cli/cli_*.py",
+        "tui_gateway/prompt_turn.py",
+        "gateway/run_turn_runner.py",
+        "gateway/platforms/api_server_runs.py",
+        "apps/desktop/src",
+        "tests/agent/test_verification_status_surfaces.py",
+        "tests/tui_gateway/test_verification_status.py",
+        "tests/gateway/test_verification_status.py"
+      ],
+      "validation": [
+        "unresolved/failed precede success in every reducer",
+        "CLI/TUI/gateway/ACP show state, effect class, reason, and safe next action",
+        "no generic automatic retry",
+        "cross-surface contract tests"
+      ],
+      "evidence": [
+        "surface matrix and screenshots/logs where appropriate",
+        "machine-readable status fixtures"
+      ],
+      "rollback": "Disable trusted UI affordances; continue displaying legacy fail-closed incomplete state.",
+      "gate": "no status consumer may map unknown to completed"
+    },
+    {
+      "id": "FHM005-IMP-011",
+      "title": "Define external-effect contracts and manual/external resolution",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-001",
+        "FHM005-IMP-002"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/verification_effects.py",
+        "agent/verification_resolution.py",
+        "tests/agent/test_verification_effects.py"
+      ],
+      "validation": [
+        "timeout-after-acceptance remains unknown",
+        "authoritative readback scope/freshness tests",
+        "manual and external attestation audit trail",
+        "unsupported effect cannot be trusted or replayed"
+      ],
+      "evidence": [
+        "effect contract catalog",
+        "manual fallback test records"
+      ],
+      "rollback": "Remove effect from trusted capability list; route all cases to manual/external resolution.",
+      "gate": "no generic remote-effect success"
+    },
+    {
+      "id": "FHM005-IMP-012",
+      "title": "Apply receipt privacy, redaction, retention, purge, and audit policy",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-003",
+        "FHM005-IMP-010"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "agent/verification_receipts.py",
+        "agent/verification_diagnostics.py",
+        "tests/agent/test_verification_privacy.py"
+      ],
+      "validation": [
+        "secret/personal-path redaction",
+        "retention expiry and purge",
+        "raw diagnostics not sent to model by default",
+        "audit access and failed purge remain non-success"
+      ],
+      "evidence": [
+        "privacy fixture output",
+        "retention/purge audit"
+      ],
+      "rollback": "Disable trusted receipts if privacy policy cannot be enforced; preserve manual fallback.",
+      "gate": "owner privacy decision required"
+    },
+    {
+      "id": "FHM005-IMP-013",
+      "title": "Run same-SHA native adversarial qualification and release gate",
+      "priority": "P0",
+      "depends_on": [
+        "FHM005-IMP-006",
+        "FHM005-IMP-007",
+        "FHM005-IMP-008",
+        "FHM005-IMP-009",
+        "FHM005-IMP-010",
+        "FHM005-IMP-011",
+        "FHM005-IMP-012",
+        "FHM005-IMP-015",
+        "FHM005-IMP-016",
+        "FHM005-IMP-017"
+      ],
+      "platform": [
+        "linux",
+        "windows"
+      ],
+      "files": [
+        ".github/workflows/fermes-fhm005-linux.yml",
+        ".github/workflows/fermes-fhm005-windows.yml",
+        "scripts/ci/verify_fhm005_qualification.py",
+        "tests/hermes_cli/test_fermes_fhm005_qualification.py"
+      ],
+      "validation": [
+        "full VALIDATION-PLAN.md matrix",
+        "native Linux and Windows on identical SHA",
+        "skip/timeout/environment-blocked is failure or not-qualified",
+        "expiry and post-release rollback gate"
+      ],
+      "evidence": [
+        "immutable SHA, workflow URLs, logs, artifacts, and signed/manual review record",
+        "zero unsupported PASS claims"
+      ],
+      "rollback": "No qualification means no trusted release; retain opt-in fail-closed/manual path.",
+      "gate": "DEC-005 release gate; separate owner default-on decision"
+    },
+    {
+      "id": "FHM005-IMP-014",
+      "title": "Operational review and separate default-on decision package",
+      "priority": "P1",
+      "depends_on": [
+        "FHM005-IMP-013"
+      ],
+      "platform": [
+        "any"
+      ],
+      "files": [
+        "docs/fermes/architecture/fhm005/IMPLEMENTATION-STATE.md",
+        "docs/fermes/architecture/fhm005/VALIDATION-PLAN.md"
+      ],
+      "validation": [
+        "demand/latency/resource/orphan metrics",
+        "upgrade/rollback runbook",
+        "owner review records explicit scope and default-on choice"
+      ],
+      "evidence": [
+        "operational report",
+        "explicit owner decision; absence is not approval"
+      ],
+      "rollback": "Keep trusted mode opt-in or disable it; retain manual/external fallback.",
+      "gate": "never infer default-on from test pass"
+    }
+  ],
+  "release_rules": [
+    "No Critical or High risk is accepted by this candidate.",
+    "No skipped, timed-out, simulated-host, or environment-blocked native security test counts as PASS.",
+    "Linux and Windows must qualify together on the same candidate SHA.",
+    "Existing Phase 1 and Linux-only evidence cannot qualify the trusted verifier.",
+    "Default-on is a separate future owner decision."
+  ]
+}
