@@ -292,15 +292,15 @@ def test_returned_partial_error_keeps_final_response_text(emits, turn_env, monke
     assert resumed["inflight"]["streaming"] is False
 
 
-@pytest.mark.parametrize("result, status", [
-    ({"final_response": "answer", "error": "failure", "failed": True}, "error"),
-    ({"final_response": "", "error": "failure", "partial": True}, "error"),
-    ({"final_response": "  ", "error": "failure", "partial": True}, "error"),
-    ({"final_response": " failure \n", "error": "failure", "partial": True}, "error"),
-    ({"final_response": "answer", "partial": True}, "complete"),
-    ({"final_response": "answer", "error": "failure", "partial": True, "interrupted": True}, "interrupted"),
+@pytest.mark.parametrize("result, status, visible_partial", [
+    ({"final_response": "answer", "error": "failure", "failed": True}, "error", False),
+    ({"final_response": "", "error": "failure", "partial": True}, "error", False),
+    ({"final_response": "  ", "error": "failure", "partial": True}, "error", False),
+    ({"final_response": " failure \n", "error": "failure", "partial": True}, "error", False),
+    ({"final_response": "answer", "partial": True}, "error", True),
+    ({"final_response": "answer", "error": "failure", "partial": True, "interrupted": True}, "interrupted", False),
 ])
-def test_only_partial_answers_on_failed_turns_set_flag(emits, turn_env, result, status):
+def test_partial_answers_never_render_as_success(emits, turn_env, result, status, visible_partial):
     agent = types.SimpleNamespace(
         session_id="session-key",
         run_conversation=lambda *a, **k: result,
@@ -313,11 +313,36 @@ def test_only_partial_answers_on_failed_turns_set_flag(emits, turn_env, result, 
 
     payload = _events(emits, "message.complete")[0]
     assert payload["status"] == status
-    assert "partial" not in payload
+    assert ("partial" in payload) is visible_partial
     if status == "error":
-        assert server._inflight_snapshot(session)["assistant"] == ""
+        assert server._inflight_snapshot(session)["assistant"] == ("answer" if visible_partial else "")
     else:
         assert server._inflight_snapshot(session) is None
+
+
+@pytest.mark.parametrize("result", [
+    {"final_response": "Verification pending", "failed": True, "verification_unresolved": True,
+     "turn_exit_reason": "verification_unresolved"},
+    {"final_response": "Verification pending", "verification_unresolved": True},
+])
+def test_unresolved_verification_never_emits_complete_status(emits, turn_env, result):
+    agent = types.SimpleNamespace(
+        session_id="session-key",
+        run_conversation=lambda *args, **kwargs: result,
+        clear_interrupt=lambda: None,
+    )
+    session = _session(agent=agent, running=True)
+    server._start_inflight_turn(session, "perform delegated work")
+
+    server._run_prompt_submit("rid", "sid", session, "perform delegated work")
+
+    frames = _events(emits, "message.complete")
+    assert len(frames) == 1
+    assert frames[0]["status"] == "error"
+    assert frames[0]["text"] == "Verification pending"
+    saved = server._inflight_snapshot(session)
+    assert saved is not None
+    assert saved["status"] == "error"
 
 
 # ── Exception path ─────────────────────────────────────────────────────
