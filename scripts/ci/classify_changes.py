@@ -24,6 +24,7 @@ Lanes:
 * ``frontend``    — TS typecheck matrix + desktop build.
 * ``site``        — Docusaurus + generated skill docs.
 * ``scan``        — supply-chain scan (Python files, .pth, setup hooks).
+* ``config_integrity`` — changed VS Code task and JS/TS build/config scan.
 * ``deps``        — pyproject.toml dependency bounds check.
 * ``uv_lock``     — ``PM lock check``. Re-resolves the whole graph against
   PyPI, so a diff that touches neither ``pyproject.toml`` nor ``uv.lock``
@@ -138,6 +139,7 @@ _CATALOG_DATA = ("plugin-catalog/", "contributors/emails/")
 # Supply-chain scan: files that can execute code at install/import time.
 _SCAN_EXTS = (".py", ".pth")
 _SCAN_FILES = {"setup.cfg", "pyproject.toml"}
+_CONFIG_INTEGRITY_EXTS = (".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx")
 
 # Bootstrap installer: the POSIX shell installer, the dev-checkout wrapper
 # that carries the same pin fragment, and the Tauri app's non-Rust sources
@@ -565,6 +567,21 @@ def _is_scan(p: str) -> bool:
     return p.endswith(_SCAN_EXTS) or p in _SCAN_FILES
 
 
+def _is_config_integrity(p: str) -> bool:
+    parts = p.split("/")
+    name = parts[-1].lower()
+    if name == "tasks.json" and ".vscode" in parts:
+        return True
+    if not name.endswith(_CONFIG_INTEGRITY_EXTS):
+        return False
+    stem = name.rsplit(".", 1)[0]
+    return (
+        "config" in stem
+        or stem == "build"
+        or any(part.lower() in {"build", "config", "scripts"} for part in parts[:-1])
+    )
+
+
 def _is_desktop_updater(p: str) -> bool:
     return (
         p.startswith(_DESKTOP_UPDATER_PATHS)
@@ -623,6 +640,7 @@ def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
         "frontend": frontend,
         "site": any(f.startswith(_SITE) for f in files),
         "scan": any(_is_scan(f) for f in files),
+        "config_integrity": any(_is_config_integrity(f) for f in files),
         "deps": deps,
         "uv_lock": any(f in ("pyproject.toml", "uv.lock") for f in files),
         "npm_lock": npm_lock,
@@ -647,6 +665,7 @@ def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
         ret["frontend"] = True
         ret["site"] = True
         ret["scan"] = True
+        ret["config_integrity"] = True
         ret["deps"] = True
         ret["uv_lock"] = True
         ret["npm_lock"] = True

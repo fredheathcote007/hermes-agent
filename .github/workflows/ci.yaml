@@ -79,6 +79,7 @@ jobs:
       frontend: ${{ steps.gate-lanes.outputs.frontend }}
       site: ${{ steps.gate-lanes.outputs.site }}
       scan: ${{ steps.gate-lanes.outputs.scan }}
+      config_integrity: ${{ steps.gate-lanes.outputs.config_integrity }}
       deps: ${{ steps.gate-lanes.outputs.deps }}
       uv_lock: ${{ steps.gate-lanes.outputs.uv_lock }}
       npm_lock: ${{ steps.gate-lanes.outputs.npm_lock }}
@@ -392,13 +393,14 @@ jobs:
   supply-chain:
     name: Supply-chain scan
     needs: detect
-    if: needs.detect.outputs.event_name == 'pull_request' && (needs.detect.outputs.scan == 'true' || needs.detect.outputs.deps == 'true')
+    if: needs.detect.outputs.event_name == 'pull_request' && (needs.detect.outputs.scan == 'true' || needs.detect.outputs.deps == 'true' || needs.detect.outputs.config_integrity == 'true')
     uses: ./.github/workflows/supply-chain-audit.yml
     with:
       commit: ${{ inputs.commit }}
       event_name: ${{ needs.detect.outputs.event_name }}
       scan: ${{ needs.detect.outputs.scan == 'true' }}
       deps: ${{ needs.detect.outputs.deps == 'true' }}
+      config_integrity: ${{ needs.detect.outputs.config_integrity == 'true' }}
 
   # ─────────────────────────────────────────────────────────────────────
   # Gate: runs after everything. ``if: always()`` ensures it reports a
