@@ -123,3 +123,20 @@ jobs:
           else
             echo "FHM-005 source absent; optional verification suite skipped"
           fi
+
+      # Unlike the passive source suite, this drives real disposable Hermes
+      # parent/child processes against a loopback-only fake model. No production
+      # credentials, external network endpoint or deployment is involved.
+      - name: Live FHM-005 delegated outcome qualification (when present)
+        env:
+          HERMES_FHM005_LIVE: '1'
+          TMPDIR: ${{ runner.temp }}/fermes-fhm005-live
+        run: |
+          if [ -f tests/hermes_cli/test_fermes_fhm005_qualification.py ]; then
+            mkdir -p "$TMPDIR"
+            .venv/bin/ruff check tests/hermes_cli/test_fermes_fhm005_qualification.py
+            .venv/bin/python -m pytest -p no:cacheprovider -q --maxfail=1 \
+              tests/hermes_cli/test_fermes_fhm005_qualification.py
+          else
+            echo "FHM-005 live qualification not present; skipped for this branch"
+          fi
