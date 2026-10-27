@@ -9,21 +9,25 @@ candidate per OS for independent challenge and security approval; it is not a se
 | Field | Value |
 | --- | --- |
 | Project / issue | `fermes-hermes` / [FHM-005 P0](https://github.com/fredheathcote007/hermes-agent/issues/5) |
-| Branch / base | `fermes/fhm005-dr02-native-security-20261027` / `39a11a31462d9cb90cdd671aef1e2c912762b31a` |
+| Branch / reviewed source SHA | `fermes/fhm005-dr02-native-security-20261027` / `ab06b12102edb306bca33c8c1c6f433abe8a5937` |
 | Decisions | [DEC-004–008](../../memory/DECISIONS.md) |
 | Related design | [DR-02/DR-04 candidate](DR02-DR04-SECURITY-DESIGN-CANDIDATE.md), [ADR candidates](ADR-DR02-DR07-CANDIDATE.md), [detailed design](DETAILED-DESIGN-CANDIDATE.md), [validation plan](VALIDATION-PLAN.md) |
 | Scope | DR-02 parent/controller identity and capability custody, plus DR-04 protected store fencing; FHM-007 excluded |
 
 ## 1. Decision proposed for review
 
-Use a privileged-install, noninteractive **systemd system-service pair** on Linux and a **Windows
-SCM service pair** on Windows. Each platform has separately protected parent-authority and
+Candidate topology only: a noninteractive **systemd system-service pair** on Linux and a **Windows
+SCM service pair** on Windows. Any privileged installation or OS/service provisioning remains
+unapproved. Each platform has separately protected parent-authority and
 verifier-controller service principals, binaries, configuration, runtime endpoints, and state. The
 interactive Hermes process authenticates to the parent service as an ordinary user; it never receives
 the parent-to-controller capability. A compromised worker and any ordinary process using the same
 interactive account must be unable to authenticate as either service, read service memory, acquire
 service handles, or alter service files. Controller acceptance requires both OS-authenticated
-service identity and a fresh, instance-bound capability proof.
+service identity and a fresh, instance-bound capability proof. Neither user SID/UID, logon/session,
+PID, ancestry, executable metadata, nor an OS peer credential can reliably distinguish an ordinary
+interactive caller from a hostile process running as the same user. The authenticated parent must
+therefore never treat those facts alone as authorization of task intent.
 
 This is the selected candidate because the approved trust boundary already requires two protected
 services, and both OS service managers can launch processes under identities distinct from the
@@ -46,7 +50,7 @@ not turn an unverified result into success.
 
 | Threat | Required control | Denial / residual result |
 | --- | --- | --- |
-| Same UID/SID process claims to be parent | Distinct protected service identity, OS peer-token check, live capability challenge | Reject connection; no status becomes verified |
+| Same UID/SID process claims to be parent or supplies unauthorized intent | Distinct protected service identity and live capability challenge authenticate service-to-service only; policy-approved non-mutating artifact readback, attempt and scope are controller-derived | No caller-derived authority; reject or unavailable, no status becomes verified |
 | Worker obtains capability | No user files/env/argv/logs; service-only memory; no inherited FDs/handles; restricted worker | Fence generation and mark ambiguous attempts `unknown_incomplete` |
 | Endpoint substitution / TOCTOU | Protected endpoint parent and service paths; pin OS endpoint/instance and service-manager generation; open relative to trusted directory/handle | `verifier_unavailable`; never retry over an unverified endpoint |
 | PID reuse / stale process observation | PID is diagnostic only; hold and validate process object/handle, service instance and generation; attempt ID is durable authority | Liveness uncertainty means unknown; no PID-only authorization |
@@ -188,7 +192,7 @@ prefer per-generation random capability verifier material so a database disclosu
 mint a new capability. Minimize lifetime and rotate on restart, disconnect ambiguity, failed proof,
 upgrade, policy change, or store recovery.
 
-All messages use a versioned, canonical, bounded schema (maximum frame 64 KiB, strict field
+All messages use a versioned, canonical, bounded schema (maximum frame 16 KiB, strict field
 allowlist, no unknown extensions, no arbitrary paths/commands, monotonic deadlines). The state
 machine is sequential; no caller-supplied UID, service identity, generation, role, policy, verdict,
 root authority, receipt state, or capability is trusted without derivation/validation:
@@ -231,18 +235,24 @@ produce a security diagnostic without exposing challenge, capability, token, or 
 
 ### Parent intent and confused-deputy contract
 
-The parent service is an authority broker, not a generic authenticated proxy. Interactive Hermes
-submits a structured task intent bound to authenticated OS user/logon, session, attempt, approved
-root/object set, and a policy ID from a root-owned allowlist. Parent independently checks caller
-authorization, quotas, session ownership, root containment and supported effect class; it creates a
-fresh controller request binding. It does not accept a client-selected “verified” field, arbitrary
-command, script, executable path, environment, output, policy definition, store path, or generation.
-The verifier executes only controller-owned check code in a restricted worker; project scripts may
-run only as untrusted checks inside that worker and cannot cause the controller to assert an outcome
-without independent observation and required readback. If the parent cannot distinguish authorized
-intent from a same-user caller's request under the accepted policy, it must refuse automatic trusted
-verification for that request. Authentication of the service never implies approval of arbitrary
-user intent.
+The parent service is an authority broker, not a generic authenticated proxy. **V1 is limited to
+policy-approved, non-mutating local artifact/readback verification** against a controller-created,
+immutable, pre-armed attempt and scope. The controller derives attempt identity, approved root/object
+set, expected artifacts, and policy ID from root-owned policy and protected state. The interactive
+caller cannot choose paths, commands, scripts, executable, environment, outputs, policy definitions,
+store paths, generation, attempt IDs, or a “verified” field; arbitrary caller input cannot mint an
+authoritative success. Trust binds to the protected policy plus controller-created attempt/scope and
+independent observation/readback, not to the identity of the interactive caller. Caller-provided
+intent is only an untrusted request to select an already armed eligible attempt; ambiguity, mismatch,
+or unsupported scope denies.
+
+All mutation and external-effect intents, and all untrusted or ambiguous intent, remain unavailable
+for automatic trusted verification and require manual operator review or separately approved external
+attestation. Project scripts never execute with trusted controller authority. If high-impact intent
+requires proving that a request came from a legitimate same-user Hermes instance, it additionally
+requires a separately protected broker-origin instance identity with owner review or another
+independently reviewed proof; absent that proof, fail closed. Service authentication does not
+authorize arbitrary user intent. Explicit owner approval of this v1 effect taxonomy is still pending.
 
 ## 5. DR-04 durable receipt custody and restart fencing
 
@@ -269,20 +279,27 @@ digest, effect contract/readback, executor generation/quiescence, controller gen
 time, expiry and state. A caller cannot nominate or join a generation. A unique database constraint
 and CAS enforce one receipt per exact attempt and one consume only.
 
-Candidate rollback fence is a second, small generation anchor excluded from application backups and
-protected from the interactive account: on Linux a root-owned file in a separate `/var/lib` service
-manager state directory; on Windows a dedicated HKLM service key with an explicit SYSTEM/verifier
-service DACL. Update the anchor durably before the controller advertises a new generation as ready;
-then commit that generation in SQLite. At startup require exact equality between anchor, database
-generation and service installation generation. Missing, lower, higher, malformed or inaccessible
-anchor/database values, a restore marker, or any interrupted cross-store update fences readiness,
-invalidates every outstanding receipt and requires privileged recovery to initialize a fresh empty
-generation. Recovery imports unresolved attempts only as `unknown_incomplete`; it never imports
-receipts as consumable authority. Application backup tooling must exclude the anchor and must not
-restore a database without invoking this recovery path. A full-machine restore that rolls back both
-the database and anchor cannot be detected by these local mechanisms; it is an explicit privileged
-recovery boundary and must always start with trusted mode disabled and a fresh generation. SQLite
-rows alone cannot prove anti-rollback against a privileged restore.
+Candidate rollback fence is a second, small generation anchor excluded from application database
+backups and inaccessible to the ordinary account. On Linux, place it in a root-owned, non-user-writable
+ancestor, with a separate verifier-UID-owned directory/file and narrowly restricted `0700`/`0600`
+access; no ordinary user has access. The same nonroot verifier service is the sole runtime writer via
+an audited single-writer operation (write temporary file, `fsync` file, atomic rename, then `fsync`
+parent directory); no privileged helper or service privilege expansion is introduced. On Windows,
+use a dedicated HKLM key with SYSTEM installer ACL and write access limited to the verifier service
+SID. The anchor is excluded from application database backups. The installer/service configuration
+generation is not silently treated as a rollback-resistant third store.
+
+For a generation advance, persist and sync the new anchor first, then commit and sync the same
+generation in SQLite; only exact equality permits readiness. If a crash or sync error occurs after
+the anchor write but before the database commit, startup detects anchor/database mismatch, fences
+readiness, invalidates outstanding receipts and requires manual recovery to create a fresh empty
+generation. A database generation ahead of, behind, missing from, or malformed relative to the anchor
+is likewise a detected interrupted update or rollback and fails closed; recovery imports unresolved
+attempts only as `unknown_incomplete`, never as consumable receipts. Application backup tooling must
+exclude the anchor and must not restore a database without this recovery path. A full machine restore
+that restores both anchor and database consistently is undetectable by these local mechanisms; after
+such a restore, trusted mode remains disabled pending manual recovery and fresh-generation setup.
+SQLite rows alone cannot prove anti-rollback against privileged restore.
 
 Before accepting requests after process restart, controller acquires exclusive store lock, validates
 schema and ACL/object identity, advances generation durably, marks any dispatched nonterminal
@@ -332,7 +349,7 @@ bounded artifacts; skipped, simulated, emulated, timed out, or unobservable mean
 | Positive identity | Approved systemd parent UID connects; exact `SO_PEERCRED`, system-unit/cgroup and endpoint instance agree; fresh challenge proves live generation | Approved SCM parent service token connects; service SID, restricted token, logon restrictions, process object, pipe instance agree; fresh challenge proves live generation | Only designated service accepted; ordinary Hermes remains lower trust |
 | Same-user hostile peer | Ordinary same-UID process attempts socket access, UID/service spoof, stale PID, FD passing, capability replay, `/proc` memory/fd access, `ptrace`, `process_vm_readv`, `pidfd_getfd` | Same-logon process opens pipe, squats first instance, forges SID fields, duplicates handles, attempts debug/memory access, stale PID, service control, remote pipe | Deny without capability leakage or service action; no false PASS on exception alone |
 | Binary/config and identity custody | Normal user attempts edit/replace unit, drop-in, executable, dependency, config, state ancestor; attempt user-unit impersonation | Normal user attempts edit service image/config/registry/DACL/dependency; shared-identity and service-SID misuse fixtures | Integrity/access check fails closed; distinct service identities proven |
-| Protocol | Wrong UID/PID/cgroup, nonce reuse, changed channel, stale generation, downgrade, unknown field, oversized frame, missing FD policy | Wrong token/SID/logon/integrity, failed impersonation/revert, pipe replacement, remote client, duplicate nonce, handle inheritance, downgrade | Typed reject/unavailable; never success |
+| Protocol | Wrong UID/PID/cgroup, nonce reuse, changed channel, stale generation, downgrade, unknown field, frame over 16 KiB, missing FD policy | Wrong token/SID/logon/integrity, failed impersonation/revert, pipe replacement, remote client, duplicate nonce, handle inheritance, downgrade | Typed reject/unavailable; never success |
 | Capability custody | Inspect service dumpability/core settings, inherited/passable FDs and worker access; restart/replay old K; attempt attach as ordinary account | Inspect token/handle inheritance allowlist, dump/debug behavior, worker handle table; restart/replay old K; attempt duplicate/debug | Secret never appears in user-readable artifacts; old K rejected |
 | Store durability | No-follow/root ownership, DB/WAL/SHM/backup ACL, symlink/hardlink/mount/rename races, crash at every commit boundary, backup restore/rollback, CAS race | No-reparse/ACL, DB/WAL/SHM, junction/alternate path races, service crash/reboot, backup restore/rollback, CAS race | Fenced generation, exactly-once consume or sticky unknown; no auto-replay |
 | Artifact/effect boundary | Replace root/artifact during check, hardlink or mount substitution, late writer, bounded readback | Junction/reparse/file-ID/case/volume substitution, late writer/lock, bounded readback | Root/object identity stable and effect-specific authoritative readback; otherwise unknown |
@@ -359,7 +376,24 @@ own threat model, deployment and approval; it is not an implicit fallback implem
 signatures/MACs can add integrity after key custody is established but do not replace service identity
 or prevent a confused deputy.
 
-## 9. Approval questions / challenge points
+## 9. Prior challenger P1 remediation status and pending owner decisions
+
+The independent PR50 challenger identified two P1 design gaps. **Intent authorization:** addressed in
+this candidate by limiting v1 to controller-created immutable attempts and policy-approved
+non-mutating local readback, while explicitly leaving same-user legitimate-Hermes attribution for
+high-impact intent unavailable without separately protected, owner-reviewed instance proof.
+**Rollback anchor:** addressed as a proposed nonroot verifier-UID single-writer anchor separate from
+the database, with explicit ownership, sync ordering, mismatch/crash detection, manual recovery, and
+the undetectable consistent full-machine restore boundary. These are design remediations only; neither
+is implemented or natively proven.
+
+Pending owner decisions include explicit approval of the v1 effect taxonomy, any same-user
+broker-origin proof for high-impact intents, exact service identity/provisioning and OS policy,
+concrete installation/upgrade/rollback plan, DR-04 details, and any trusted-mode promotion. No owner
+approval is inferred here. Privileged implementation and trusted mode remain gated on owner and
+independent security review plus native Linux and Windows evidence.
+
+## 10. Approval questions / challenge points
 
 Security review must specifically challenge: whether static Linux service UIDs and systemd/cgroup
 evidence defeat all ordinary same-UID access on the selected Ubuntu build; whether the selected
