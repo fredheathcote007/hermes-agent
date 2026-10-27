@@ -255,7 +255,8 @@
       "depends_on": [
         "FHM005-IMP-004",
         "FHM005-IMP-003",
-        "FHM005-IMP-011"
+        "FHM005-IMP-011",
+        "FHM005-IMP-017"
       ],
       "platform": [
         "any"
@@ -276,7 +277,7 @@
         "simulation and disposable genuine Hermes process tests under exact SHA"
       ],
       "rollback": "Disable controller bridge, retain durable unknown and current fail-closed behavior.",
-      "gate": "Prove parent success cannot be driven by child result or same-user SQLite alone."
+      "gate": "Prove parent success cannot be driven by child result or same-user SQLite alone. Implementation integration cannot run before IMP-008 controller lifecycle; only isolated mapping/unit tests are valid ahead of controller."
     },
     {
       "id": "FHM005-IMP-017",

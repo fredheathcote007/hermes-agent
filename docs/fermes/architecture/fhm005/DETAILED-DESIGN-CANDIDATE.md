@@ -440,3 +440,9 @@ DR-02–DR-07 and owner review. See [IMPLEMENTATION-MANIFEST.json](IMPLEMENTATIO
 - A managed service may start on demand rather than remain resident; both options must enforce the same protected identity, state and IPC. This lifecycle choice remains proposed under DR-03.
 
 The only currently authorised implementation scope is pure data/contracts and tests. DR-02 to DR-07 still gate services, IPC, receipt issuance, privileged installation and trusted-mode integration.
+
+## Protected parent authority — material DR-02 gate
+
+An OS socket peer UID or Windows user SID alone **cannot distinguish** a legitimate parent from a malicious unrelated process running with the same account. DEC-006 includes unprivileged local processes, so the controller must accept requests only from an independently authenticated parent identity/capability that the worker and other untrusted local processes cannot steal or use. The design may use a distinct supervising principal, non-inheritable protected capability from an OS authority, or an explicitly qualified equivalent, but must show native same-user impersonation tests before declaring this boundary trustworthy. Merely storing a token in worker-accessible user files, environment variables, same-user SQLite, or unprotected process memory does not establish authority. If the requested parent separation cannot be proven on a supported platform, trusted mode is **unavailable**, with manual/external verification fallback; do not weaken DEC-006 silently. The precise capability mechanism is a **material DR-02 decision not yet approved**.
+
+The monotonic attempt contract must explicitly define unknown/incomplete, interrupted/cancelled, unavailable, rejected, manual/external awaiting resolution, verified/consumed terminal states, and the no-replay rules. The initial pure receipt parser is only a partial IMP-001 deliverable.
