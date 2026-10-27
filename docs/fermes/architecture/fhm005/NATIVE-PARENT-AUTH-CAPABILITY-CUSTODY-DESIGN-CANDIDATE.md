@@ -3,16 +3,36 @@
 **Status: unapproved security-design candidate.** DEC-008 approves two independently protected
 services (parent authority and verifier controller) on Linux and Windows. It does not approve this
 authentication mechanism, service provisioning, installation, OS policy, receipt authority,
-implementation, deployment, merge, or trusted-mode enablement. This document proposes one concrete
-candidate per OS for independent challenge and security approval; it is not a security proof.
+implementation, deployment, merge, or trusted-mode enablement. This revision records three High
+severity independent-review findings and candidate mitigations; none is approved, implemented, or
+natively proven. **Pending owner decision:** approve (or reject) a distinct worker principal and
+scoped readback ACL authorizations on both platforms. Stop before any privileged installation.
 
 | Field | Value |
 | --- | --- |
 | Project / issue | `fermes-hermes` / [FHM-005 P0](https://github.com/fredheathcote007/hermes-agent/issues/5) |
-| Branch / reviewed source SHA | `fermes/fhm005-dr02-native-security-20261027` / `ab06b12102edb306bca33c8c1c6f433abe8a5937` |
+| Branch / reviewed source SHA | `fermes/fhm005-dr02-native-security-20261027` / `ec0fd548be1deed3ffed318358292c32aac6b8cd` |
 | Decisions | [DEC-004–008](../../memory/DECISIONS.md) |
 | Related design | [DR-02/DR-04 candidate](DR02-DR04-SECURITY-DESIGN-CANDIDATE.md), [ADR candidates](ADR-DR02-DR07-CANDIDATE.md), [detailed design](DETAILED-DESIGN-CANDIDATE.md), [validation plan](VALIDATION-PLAN.md) |
 | Scope | DR-02 parent/controller identity and capability custody, plus DR-04 protected store fencing; FHM-007 excluded |
+
+## PR #50 independent review remediation — candidate only
+
+The following three High findings block security approval. These candidate mitigations require
+explicit owner/security approval, implementation review, and native Linux and Windows evidence.
+DEC-008 approves only the paired protected-service topology; it does not approve these controls.
+
+| Finding | Severity and trace | Candidate mitigation (not approved or proven) | Required native positive and negative tests |
+| --- | --- | --- | --- |
+| HMAC capability contradiction | **High.** Previous text retained only a one-way controller verifier while PROVE required `HMAC-SHA-256(K, message)`. A verifier cannot recover `K`. | Keep uniformly random 256-bit raw `K` in protected volatile memory in both services for the authenticated service-instance session. The controller uses it for constant-time HMAC verification; it stores no verifier or reversible form on disk. Set a short explicit monotonic expiry; erase and reject after expiry, failed/ambiguous proof, service restart, generation advance, service-instance change, policy upgrade, or store recovery. Restart durably advances/fences the generation before readiness; only fresh authenticated bootstrap mints a new `K`. This is ephemeral service memory, not persistent storage. If same-user memory, dump, swap, or handle access cannot be prevented for the key's lifetime, remain unavailable/manual. | **Positive:** live designated services complete fresh proofs before expiry; expiry and restart require re-bootstrap. **Negative:** native same-user memory/dump/handle access attempts, nonce replay, expired/prior-generation key, and post-restart proof are rejected on each OS. No mocked or unsupported protection counts as PASS. |
+| Worker can inherit controller identity | **High.** Windows `STARTUPINFOEX` handle allowlisting limits inherited handles but does not change the worker security principal. On Linux, `NoNewPrivileges=yes` prevents switching to another worker UID using `setuid`. | Require workers to execute under a separate, independently restricted non-service principal/token, provisioned and validated by a privileged installer and native checks. Never launch arbitrary worker code as the controller service identity. The approved paired-service topology does not provide this launch mechanism. If a least-privilege launch authority cannot establish and validate the separate principal without broadening controller authority, fail closed to manual/external verification. Handle filtering and `NoNewPrivileges` are not identity separation. | **Positive:** actual native process/token inspection proves controller, parent, and worker have distinct principals and the worker cannot access either service's memory, IPC authority, or protected store. **Negative:** request launch as either service identity and attempt UID/token substitution and service/store access; launch must be denied or verification unavailable. Mocks do not qualify. |
+| Verifier cannot read ordinary user home/project targets | **High.** Distinct Linux/Windows service principals cannot assume access to user-owned targets; no approved snapshot/descriptor channel exists and received descriptors are closed. | Define a narrow, owner-authorized, read-only allowlist of target roots/objects the verifier may traverse. Provision exact OS ACLs only for those roots and descendants; no broad home/profile access. Read directly from actual targets through pinned handles with no-follow/reparse rejection and strict allowlist containment. Do not trust worker copies or descriptors. If the actual target is inaccessible, outside the allowlist, or cannot be safely pinned, report `INCOMPLETE`/manual or separately approved external attestation, never success. ACL grants and staging require owner approval and native proof. | **Positive:** the designated service reads an allowlisted actual target read-only and returns controller-derived identity/digest evidence. **Negative:** attempt unlisted paths, parent traversal, symlink/reparse/junction escape, replacement races, worker copies, ACL widening, and writes; deny or report `INCOMPLETE`, with no success or broad profile traversal. Run on both native OSes. |
+
+**Exact pending owner decision before privileged work:** approve or reject (a) a distinct worker
+principal/token and its restricted launch authority, and (b) read-only ACL grants for explicitly
+allowlisted target roots. These are candidate controls within the paired-service topology, not an
+approved topology expansion. Until authorized, install no identities, ACLs, services, or staging;
+trusted verification remains unavailable/manual where these controls are required.
 
 ## 1. Decision proposed for review
 
@@ -51,7 +71,7 @@ not turn an unverified result into success.
 | Threat | Required control | Denial / residual result |
 | --- | --- | --- |
 | Same UID/SID process claims to be parent or supplies unauthorized intent | Distinct protected service identity and live capability challenge authenticate service-to-service only; policy-approved non-mutating artifact readback, attempt and scope are controller-derived | No caller-derived authority; reject or unavailable, no status becomes verified |
-| Worker obtains capability | No user files/env/argv/logs; service-only memory; no inherited FDs/handles; restricted worker | Fence generation and mark ambiguous attempts `unknown_incomplete` |
+| Worker obtains capability or controller identity | Separate independently restricted worker principal/token; no user files/env/argv/logs; no inherited FDs/handles; service-only memory | Fence generation and mark ambiguous attempts `unknown_incomplete`; fail closed if distinct worker principal cannot be proven |
 | Endpoint substitution / TOCTOU | Protected endpoint parent and service paths; pin OS endpoint/instance and service-manager generation; open relative to trusted directory/handle | `verifier_unavailable`; never retry over an unverified endpoint |
 | PID reuse / stale process observation | PID is diagnostic only; hold and validate process object/handle, service instance and generation; attempt ID is durable authority | Liveness uncertainty means unknown; no PID-only authorization |
 | Confused deputy | Parent accepts bounded task intent and policy IDs only; controller never executes project scripts | Unsupported intent rejected; no arbitrary command endpoint |
@@ -79,9 +99,10 @@ the OS boundary. No API may elevate that marker or a caller-supplied generation 
 
 Use two **system** units managed by PID 1 (not `systemd --user` units): `hermes-parent.service` under
 dedicated static, non-login `hermes-parent` UID and `hermes-verifier.service` under a different
-static, non-login `hermes-verifier` UID. Neither is the interactive account; workers use a separate
-restricted execution identity. A static identity makes ownership and peer-credential policy stable
-across restart. Do not run either service as root. Root owns the unit files, drop-ins, executable,
+static, non-login `hermes-verifier` UID. Neither is the interactive account; workers must use a
+separate, independently restricted execution UID/token, not either service UID. A static identity
+makes ownership and peer-credential policy stable across restart. Do not run either service as root.
+Root owns the unit files, drop-ins, executable,
 libraries/dependencies, and configuration; service identities cannot modify them. All unit path
 ancestors are non-writable by ordinary users. Use a system-service-managed endpoint directory
 in which the controller can create or receive sockets, with traversal limited to the designated
@@ -120,7 +141,11 @@ denial; native tests must attempt `ptrace`, `/proc/<pid>/mem`, `process_vm_readv
 `pidfd_getfd`, and FD passing. Make service processes non-dumpable, disable core dumps, close
 unapproved descriptors at startup, use `CLOEXEC`, and never rely on `memfd` secrecy (a memfd is
 readable through a leaked descriptor). If the normal account can inspect capability memory or
-obtain service descriptors on a supported host, capability bootstrap fails qualification.
+obtain service descriptors on a supported host, capability bootstrap fails qualification. In
+particular, `NoNewPrivileges=yes` prevents a worker from switching to a separate UID via `setuid`;
+it does not establish a worker identity. A separately restricted worker UID and validated,
+least-privilege launch authority are required. If these cannot be established without broadening
+controller authority, worker execution and trusted verification remain unavailable/manual.
 
 References: Linux [`unix(7)`](https://man7.org/linux/man-pages/man7/unix.7.html) for local sockets
 and peer credentials; systemd [`systemd.exec`](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)
@@ -170,8 +195,12 @@ may enable `SeDebugPrivilege`, take ownership, debug another process, or open wo
 with read/write rights. Use non-inheritable handles by default. Worker creation uses
 `STARTUPINFOEX` with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` allowlisting only necessary standard
 handles; also clear handle inheritance at `CreateProcess`. Do not pass pipe, service token, process
-handle, section, file, registry, or store handles. Validate worker token and Job Object membership
-before resuming execution. Test `DuplicateHandle`, debug privilege, process memory, named object
+handle, section, file, registry, or store handles. A handle allowlist is inheritance hygiene only;
+it does not establish a worker security principal. The worker must run with a separately restricted
+token/principal that is neither service identity, and its token and Job Object membership must be
+validated before resuming execution. If the service cannot create and validate that token under an
+independently approved least-privilege launch design, do not launch the worker for trusted
+verification. Test `DuplicateHandle`, debug privilege, process memory, named object
 squatting, and service control access as the normal user.
 
 References: Microsoft [named-pipe security and access rights](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights),
@@ -181,16 +210,19 @@ and [`STARTUPINFOEX`](https://learn.microsoft.com/en-us/windows/win32/api/winbas
 
 ## 4. Authenticated bootstrap and wire state machine
 
-The controller generates a 256-bit capability with the OS CSPRNG after an authenticated bootstrap;
-the parent does not choose it. The controller keeps only a one-way verifier (HMAC-derived verifier
-under a controller service key, or constant-time hash of a uniformly random 256-bit bearer) in
-protected volatile state. The parent retains the capability only in locked/non-dumpable service
-memory for its service instance. Neither service writes the capability or a reversible form to
+The controller generates a uniformly random 256-bit capability `K` with the OS CSPRNG after an
+authenticated bootstrap; the parent does not choose it. Both services retain raw `K` only in
+protected volatile memory for the bound service-instance session so the controller can calculate
+and compare the specified HMAC proof. There is no one-way verifier in this design: it cannot verify
+the specified HMAC without `K`. Neither service writes `K`, a reversible form, or a verifier to
 SQLite, config, logs, crash dumps, profile files, environment, command line, worker IPC, or backups.
-The controller's service key, if required, is controller-only and never shared with the parent;
-prefer per-generation random capability verifier material so a database disclosure alone cannot
-mint a new capability. Minimize lifetime and rotate on restart, disconnect ambiguity, failed proof,
-upgrade, policy change, or store recovery.
+Set an explicit short monotonic expiry at mint; erase and reject `K` on expiry, failed or ambiguous
+proof, service restart, service-instance change, generation advance, policy upgrade, or store
+recovery. Restart must durably advance/fence the generation before readiness, and only fresh
+authenticated bootstrap may mint a new `K`. If native controls cannot prevent same-user memory,
+dump, swap, or handle access for the key's lifetime, capability bootstrap fails qualification and
+trusted verification remains unavailable/manual. This is an unapproved candidate mechanism, not a
+claim that volatile memory alone is protected.
 
 All messages use a versioned, canonical, bounded schema (maximum frame 16 KiB, strict field
 allowlist, no unknown extensions, no arbitrary paths/commands, monotonic deadlines). The state
@@ -207,11 +239,12 @@ root authority, receipt state, or capability is trusted without derivation/valid
    This response binds the service's bootstrap state to the authenticated connection; the identity
    authority remains the already-checked OS service principal and manager evidence. No pre-shared
    secret is claimed to exist before this step.
-4. **MINT:** after parent process/service-instance validation, controller mints random `K`, stores
-   verifier and binding `(parent process object, parent instance, controller instance, Gc, protocol,
-   endpoint instance)`, and returns `K` once over the authenticated local channel. Parent stores K
-   only in protected memory. The bootstrap connection is then closed; no later channel inherits its
-   authority implicitly.
+4. **MINT:** after parent process/service-instance validation, controller mints random `K`, retains
+   raw `K` only in protected volatile memory with an explicit short monotonic expiry, and binds it to
+   `(parent process object, parent instance, controller instance, Gc, protocol, endpoint instance)`.
+   It returns `K` once over the authenticated local channel; parent stores K only in protected
+   volatile memory for that service instance. The bootstrap connection is then closed; no later
+   channel inherits its authority implicitly. Neither service persists a verifier or key form.
 5. **PROVE:** for each new connection controller redoes OS_AUTH, sends fresh `Nc2` and current
    `(Gc, controller instance, endpoint instance)`. Parent responds with `HMAC-SHA-256(K, "parent" ||
    Nc2 || Np2 || Gc || parent instance || controller instance || endpoint instance || protocol ||
@@ -253,6 +286,24 @@ requires proving that a request came from a legitimate same-user Hermes instance
 requires a separately protected broker-origin instance identity with owner review or another
 independently reviewed proof; absent that proof, fail closed. Service authentication does not
 authorize arbitrary user intent. Explicit owner approval of this v1 effect taxonomy is still pending.
+
+## Readback target access boundary
+
+The verifier's service identity must not be assumed to read the interactive user's home or project
+tree. Candidate readback is limited to explicit, owner-authorized target roots or objects derived
+from controller-owned policy and the pre-armed attempt. The verifier receives only the read and
+directory-traversal ACLs needed for those roots; no recursive grant over the user profile, general
+project-root access, or worker-selected root is permitted. Exact root ACLs and any target staging
+require separate owner approval before privileged installation.
+
+The verifier reads the actual target in place using pinned directory/object handles, strict
+containment beneath the allowlisted root, and no-follow/reparse-point rejection at every component.
+It checks object identity around reads and does not accept worker copies, caller paths, or received
+descriptors as evidence. Readback is read-only and bounded to the controller-derived artifact set.
+If a target cannot be reached, pinned, or shown to be inside the approved allowlist, the result is
+`INCOMPLETE`/manual or separately approved external attestation; it is never successful verification.
+Native tests must prove the intended read path and denial of unlisted paths, traversal, replacement
+races, and writes on Linux and Windows.
 
 ## 5. DR-04 durable receipt custody and restart fencing
 
@@ -346,13 +397,13 @@ bounded artifacts; skipped, simulated, emulated, timed out, or unobservable mean
 
 | Area | Linux native checks | Windows native checks | Required result |
 | --- | --- | --- | --- |
-| Positive identity | Approved systemd parent UID connects; exact `SO_PEERCRED`, system-unit/cgroup and endpoint instance agree; fresh challenge proves live generation | Approved SCM parent service token connects; service SID, restricted token, logon restrictions, process object, pipe instance agree; fresh challenge proves live generation | Only designated service accepted; ordinary Hermes remains lower trust |
+| Positive identity | Approved systemd parent UID connects; exact `SO_PEERCRED`, system-unit/cgroup and endpoint instance agree; fresh challenge proves live generation; worker uses separate restricted UID | Approved SCM parent service token connects; service SID, restricted token, logon restrictions, process object, pipe instance agree; fresh challenge proves live generation; worker uses separate restricted principal/token | Only designated services accepted; worker remains a third, lower-trust principal |
 | Same-user hostile peer | Ordinary same-UID process attempts socket access, UID/service spoof, stale PID, FD passing, capability replay, `/proc` memory/fd access, `ptrace`, `process_vm_readv`, `pidfd_getfd` | Same-logon process opens pipe, squats first instance, forges SID fields, duplicates handles, attempts debug/memory access, stale PID, service control, remote pipe | Deny without capability leakage or service action; no false PASS on exception alone |
 | Binary/config and identity custody | Normal user attempts edit/replace unit, drop-in, executable, dependency, config, state ancestor; attempt user-unit impersonation | Normal user attempts edit service image/config/registry/DACL/dependency; shared-identity and service-SID misuse fixtures | Integrity/access check fails closed; distinct service identities proven |
 | Protocol | Wrong UID/PID/cgroup, nonce reuse, changed channel, stale generation, downgrade, unknown field, frame over 16 KiB, missing FD policy | Wrong token/SID/logon/integrity, failed impersonation/revert, pipe replacement, remote client, duplicate nonce, handle inheritance, downgrade | Typed reject/unavailable; never success |
-| Capability custody | Inspect service dumpability/core settings, inherited/passable FDs and worker access; restart/replay old K; attempt attach as ordinary account | Inspect token/handle inheritance allowlist, dump/debug behavior, worker handle table; restart/replay old K; attempt duplicate/debug | Secret never appears in user-readable artifacts; old K rejected |
+| Capability custody | Inspect raw `K` only in parent/controller protected volatile memory, dump/swap controls, inherited/passable FDs and worker access; test expiry and restart/replay | Inspect raw `K` only in parent/controller protected volatile memory, dump/debug behavior, handles and worker token; test expiry and restart/replay | No persistent verifier/key artifact; only live in-session proof succeeds; old/expired `K` rejected |
 | Store durability | No-follow/root ownership, DB/WAL/SHM/backup ACL, symlink/hardlink/mount/rename races, crash at every commit boundary, backup restore/rollback, CAS race | No-reparse/ACL, DB/WAL/SHM, junction/alternate path races, service crash/reboot, backup restore/rollback, CAS race | Fenced generation, exactly-once consume or sticky unknown; no auto-replay |
-| Artifact/effect boundary | Replace root/artifact during check, hardlink or mount substitution, late writer, bounded readback | Junction/reparse/file-ID/case/volume substitution, late writer/lock, bounded readback | Root/object identity stable and effect-specific authoritative readback; otherwise unknown |
+| Artifact/effect boundary | Read only allowlisted actual target through pinned no-follow handles; replace root/artifact during check, hardlink or mount substitution, late writer, unlisted path | Read only allowlisted actual target through pinned non-reparse handles; junction/reparse/file-ID/case/volume substitution, late writer/lock, unlisted path | Approved target remains contained and stable during bounded readback; unlisted/inaccessible target is `INCOMPLETE`/manual, never success |
 | Teardown / rollback | Stop candidate process, fence generation, revoke K, preserve unresolved attempts, verify no orphan; restore prior nontrusted behavior | Stop services, revoke K, preserve unresolved attempts, remove candidate test state only, verify no orphan; restore prior nontrusted behavior | No receipt survives rollback as current; no uncertain action replay |
 
 Independent security approval is a gate before any privileged implementation. Further non-negotiable
@@ -392,6 +443,11 @@ broker-origin proof for high-impact intents, exact service identity/provisioning
 concrete installation/upgrade/rollback plan, DR-04 details, and any trusted-mode promotion. No owner
 approval is inferred here. Privileged implementation and trusted mode remain gated on owner and
 independent security review plus native Linux and Windows evidence.
+
+The three High findings add this exact pending decision: approve or reject a separately restricted
+worker principal/token and the least-privilege launch authority needed to use it, plus read-only ACL
+grants for explicitly allowlisted target roots. No identities, ACLs, or staging may be installed
+until that decision and the concrete native plan are approved.
 
 ## 10. Approval questions / challenge points
 
