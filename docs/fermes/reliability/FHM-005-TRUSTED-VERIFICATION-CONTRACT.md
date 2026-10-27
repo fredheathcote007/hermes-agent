@@ -55,3 +55,60 @@ The next permissible action is an architecture-reviewed transport/controller des
 independently inject provenance and durable nonce ownership, followed by native Linux and Windows
 security/operational qualification under DEC-005. No deployment or trust-boundary change is part
 of this foundation.
+
+## Monotonic attempt state contract
+
+`agent/trusted_verifier_attempt.py` adds a pure, immutable snapshot model for one bound attempt. It
+is not enabled by Hermes and does not implement a controller. The request identity binds the
+session, attempt, authority and expected effects; every event must repeat the exact session and
+attempt identity. Event timestamps cannot be from the future or older than the current snapshot.
+Invalid mappings, unknown fields, wrong sources and regressive transitions fail closed.
+
+The allowed progression is:
+
+```text
+requested -> reserved -> running -> evidence_observed -> awaiting_verification
+                                                        -> verified_accepted
+```
+
+The exact event/source branches are:
+
+| Event | Source | Allowed from | Result |
+| --- | --- | --- | --- |
+| `reserve` | controller | requested | reserved |
+| `start` | controller | reserved | running |
+| `worker_progress` | worker | running | running (idempotent) |
+| `evidence_observed` | controller | running | evidence_observed |
+| `await_verification` | controller | running or evidence_observed | awaiting_verification |
+| `trusted_verified` | future trusted-verifier seam | awaiting_verification | verified_accepted |
+| `worker_failed` | worker | reserved, running, or already rejected_failed | rejected_failed |
+| `worker_unknown` | worker | reserved through verifier_unavailable | unknown_incomplete |
+| `interrupt_cancel` | controller | any active state | interrupted_cancelled |
+| `verifier_unavailable` | controller | awaiting_verification | verifier_unavailable |
+| `await_manual_or_external` | controller | verifier_unavailable | awaiting_manual_or_external_resolver |
+
+`controller_reject` may move any active state to `rejected_failed`; all duplicate events whose
+result is already the current state are idempotent. No other edges exist.
+
+Worker telemetry can report progress, failure (`rejected_failed`) or unknown
+(`unknown_incomplete`), but it cannot report success, observe trusted evidence, or authorize
+acceptance. `unknown_incomplete` is sticky. A verifier outage may progress through
+`verifier_unavailable` to `awaiting_manual_or_external_resolver`; no manual resolver is implemented,
+so that state remains awaiting. Failed, interrupted/cancelled and verified/accepted states are
+terminal and immutable, apart from a future separately approved operator evidence path.
+
+Reloading a snapshot that was reserved, running, evidence-observed, awaiting verification, or
+verifier-unavailable converts it to `unknown_incomplete`. The model never replays work. A verified
+transition requires a `TrustedVerificationProof` produced only after `validate_receipt` returned
+`VERIFIED` with caller-injected `trusted_source=True`; receipt text, model output, and worker claims
+cannot create that proof. This is only a test/future-adapter seam: Python object construction is not
+authentication, and the model is not atomic persistent state until a future controller supplies
+protected storage and compare-and-swap semantics. Zero expected effects remain ineligible for
+automatic verification.
+
+
+The pure attempt-state snapshot loader is **not a trusted proof store**. It rejects
+a serialized `verified_accepted` status, even when the other snapshot fields
+match. Any future recovery of a genuine verified result needs independently
+authenticated service-owned persistence and a separately reviewed load path.
+Untrusted saved status text must never restore verified success.
