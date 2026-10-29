@@ -84,7 +84,13 @@ def _validate_markdown(data: bytes, name: str) -> list[str]:
     except UnicodeDecodeError:
         return [f"selected Markdown metadata is not UTF-8: {name}"]
     fence_count = sum(line.lstrip().startswith(("```", "~~~")) for line in text.splitlines())
-    return [f"unclosed fenced code block: {name}"] if fence_count % 2 else []
+    problems = [f"unclosed fenced code block: {name}"] if fence_count % 2 else []
+    # Exactly two end-of-line spaces are intentional Markdown hard breaks.
+    for number, line in enumerate(text.splitlines(), start=1):
+        trailing = len(line) - len(line.rstrip(" "))
+        if trailing and trailing != 2:
+            problems.append(f"invalid trailing whitespace in {name}:{number}")
+    return problems
 
 
 def _validate_workflow(data: bytes, name: str) -> list[str]:
@@ -174,7 +180,13 @@ def inspect_environment() -> tuple[list[ChangedPath], str, Path]:
         raise ValueError("synthetic merge must have base SHA as parent 1 and exact PR head as parent 2")
     entries = parse_name_status(_git(candidate, "diff", "--name-status", "-z", base_sha, "HEAD"))
     result = subprocess.run(
-        ["git", "diff", "--check", base_sha, "HEAD"], cwd=candidate, capture_output=True, check=False
+        [
+            "git", "diff", "--check", base_sha, "HEAD", "--", ".",
+            ":(exclude,glob)**/*.md",
+            ":(exclude,glob)**/*.mdx",
+            ":(exclude,glob)**/*.markdown",
+        ],
+        cwd=candidate, capture_output=True, check=False
     )
     if result.returncode:
         raise ValueError("git diff --check rejected the candidate diff")

@@ -9,6 +9,7 @@ from scripts.ci.fermes_gate import (
     parse_name_status,
     source_change,
     validate_files,
+    _validate_markdown,
 )
 
 
@@ -84,3 +85,9 @@ def test_diff_check_is_a_real_git_check(tmp_path):
     subprocess.run(["git", "commit", "-qm", "candidate"], cwd=tmp_path, check=True)
     result = subprocess.run(["git", "diff", "--check", base, "HEAD"], cwd=tmp_path, check=False)
     assert result.returncode != 0
+
+
+def test_markdown_hardbreak_allowed_but_other_trailing_whitespace_rejected():
+    assert _validate_markdown(b"**Date:** 2026-10-28 UTC  \n", "memo.md") == []
+    assert _validate_markdown(b"trailing one \n", "memo.md")
+    assert _validate_markdown(b"trailing three   \n", "memo.md")
