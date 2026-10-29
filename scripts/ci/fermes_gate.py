@@ -15,8 +15,13 @@ from typing import Iterable
 
 _MARKDOWN_SUFFIXES = {".md", ".mdx", ".markdown"}
 _WORKFLOW_ROOTS = (".github/workflows/", ".github/actions/")
+GATE_CRITICAL_FILES = (
+    ".github/workflows/fermes-pr-checks.yml",
+    ".github/workflows/fermes-source-tests.yml",
+    "scripts/ci/fermes_gate.py",
+)
 _SHA = re.compile(r"^[0-9a-f]{40}$")
-_PINNED_ACTION = re.compile(r"^\s+uses:\s+([^\s]+)@([0-9a-f]{40})(?:\s+#.*)?$")
+_GIT_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -27,7 +32,12 @@ class ChangedPath:
 
 
 def _git(root: Path, *args: str, check: bool = True) -> bytes:
-    result = subprocess.run(["git", *args], cwd=root, check=False, capture_output=True)
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=root, check=False, capture_output=True, timeout=_GIT_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"git {' '.join(args)} timed out") from exc
     if check and result.returncode:
         detail = result.stderr.decode("utf-8", "replace").strip()
         raise ValueError(f"git {' '.join(args)} failed: {detail}")
@@ -75,7 +85,7 @@ def is_markdown(path: str) -> bool:
 def source_change(paths: Iterable[str | ChangedPath]) -> bool:
     """Unknown and code categories require the substantive source lane."""
     names = (item.path if isinstance(item, ChangedPath) else item for item in paths)
-    return any(not is_markdown(name) and name != ".github/workflows/fermes-pr-checks.yml" for name in names)
+    return any(not is_markdown(name) for name in names)
 
 
 def _validate_markdown(data: bytes, name: str) -> list[str]:
@@ -90,54 +100,6 @@ def _validate_markdown(data: bytes, name: str) -> list[str]:
         trailing = len(line) - len(line.rstrip(" "))
         if trailing and trailing != 2:
             problems.append(f"invalid trailing whitespace in {name}:{number}")
-    return problems
-
-
-def _validate_workflow(data: bytes, name: str) -> list[str]:
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return [f"selected workflow metadata is not UTF-8: {name}"]
-    # Only this protected gate has the mandatory trusted-event contract.
-    # Other workflow changes are source changes and require substantive CI;
-    # they must not be judged against this gate's event requirements.
-    if name != ".github/workflows/fermes-pr-checks.yml":
-        return []
-    lines = text.splitlines()
-    problems: list[str] = []
-    if "pull_request_target" not in text:
-        problems.append("workflow must use pull_request_target")
-    if "branches: [main]" not in text:
-        problems.append("workflow must target main")
-    required_types = {"opened", "reopened", "synchronize", "ready_for_review"}
-    types_match = re.search(r"types:\s*\[([^]]+)\]", text)
-    declared_types = set()
-    if types_match:
-        declared_types = {item.strip() for item in types_match.group(1).split(",")}
-    if not required_types <= declared_types:
-        problems.append("workflow must handle opened, reopened, synchronize, and ready_for_review")
-    if "pull_request:" in text or "workflow_run:" in text:
-        problems.append("workflow must not duplicate pull_request/workflow_run execution")
-    if re.search(r"^\s*secrets\s*:", text, re.MULTILINE) or "GITHUB_TOKEN" in text:
-        problems.append("workflow must not use secrets or expose a token")
-    if any(word in text.lower() for word in ("blacksmith", "publish")):
-        problems.append("workflow must not publish or use Blacksmith")
-    if re.search(r"^\s*[A-Za-z_-]+:\s*write\s*$", text, re.MULTILINE):
-        problems.append("workflow must not request write permissions")
-    in_run, run_indent = False, -1
-    for line in lines:
-        indent = len(line) - len(line.lstrip())
-        if re.match(r"^\s+run:\s*(?:\||>)?\s*$", line):
-            in_run, run_indent = True, indent
-        elif in_run and line.strip() and indent <= run_indent:
-            in_run = False
-        if in_run and "${{" in line:
-            problems.append("run blocks must not interpolate GitHub expressions")
-        if "uses:" in line:
-            if line.strip().startswith("uses: ./"):
-                problems.append("workflow must not invoke a repository-local action")
-            elif _PINNED_ACTION.match(line) is None:
-                problems.append(f"external action is not pinned: {line.strip()}")
     return problems
 
 
@@ -157,8 +119,22 @@ def validate_files(entries: Iterable[ChangedPath], root: Path) -> list[str]:
             continue
         if is_markdown(entry.path):
             problems.extend(_validate_markdown(data, entry.path))
-        if is_workflow(entry.path):
-            problems.extend(f"{entry.path}: {problem}" for problem in _validate_workflow(data, entry.path))
+    return problems
+
+
+def validate_gate_integrity(base: Path, candidate: Path) -> list[str]:
+    """Require every protected gate input to be byte-identical to trusted base."""
+    problems: list[str] = []
+    for name in GATE_CRITICAL_FILES:
+        base_path, candidate_path = base / name, candidate / name
+        if not base_path.is_file() or base_path.is_symlink():
+            problems.append(f"trusted base is missing gate-critical file: {name}; owner bootstrap required")
+            continue
+        if not candidate_path.is_file() or candidate_path.is_symlink():
+            problems.append(f"candidate removed or replaced gate-critical file: {name}")
+            continue
+        if base_path.read_bytes() != candidate_path.read_bytes():
+            problems.append(f"candidate changed gate-critical file: {name}; owner-controlled migration required")
     return problems
 
 
@@ -186,11 +162,20 @@ def inspect_environment() -> tuple[list[ChangedPath], str, Path]:
             ":(exclude,glob)**/*.mdx",
             ":(exclude,glob)**/*.markdown",
         ],
-        cwd=candidate, capture_output=True, check=False
+        cwd=candidate, capture_output=True, check=False, timeout=_GIT_TIMEOUT_SECONDS
     )
     if result.returncode:
         raise ValueError("git diff --check rejected the candidate diff")
     return entries, head_sha, candidate
+
+
+def classify_environment() -> tuple[list[ChangedPath], str]:
+    """Classify the exact synthetic merge using the trusted checkout's helper."""
+    entries, head_sha, candidate = inspect_environment()
+    problems = validate_files(entries, candidate)
+    if problems:
+        raise ValueError("; ".join(problems))
+    return entries, head_sha
 
 
 def _write_outputs(values: dict[str, str]) -> None:
@@ -204,19 +189,12 @@ def _write_outputs(values: dict[str, str]) -> None:
             output.write(f"{key}={value}\n")
 
 
-def aggregate(needs: dict[str, object], source: str) -> list[str]:
-    """Require inspect success and the exact expected source-test result."""
-    if source not in {"true", "false"}:
-        return ["inspect.source=missing-or-invalid"]
+def aggregate(needs: dict[str, object]) -> list[str]:
+    """Require the base-trusted inspection job to finish successfully."""
     inspect = needs.get("inspect")
-    source_test = needs.get("source-test")
     failures: list[str] = []
     if not isinstance(inspect, dict) or inspect.get("result") != "success":
         failures.append(f"inspect={inspect.get('result', 'missing') if isinstance(inspect, dict) else 'missing'}")
-    expected = "success" if source == "true" else "skipped"
-    actual = source_test.get("result") if isinstance(source_test, dict) else None
-    if actual != expected:
-        failures.append(f"source-test={actual or 'missing'} (expected {expected})")
     return failures
 
 
@@ -224,14 +202,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("inspect")
+    subparsers.add_parser("classify")
     aggregate_parser = subparsers.add_parser("aggregate")
     aggregate_parser.add_argument("--json", required=True)
-    aggregate_parser.add_argument("--source", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "inspect":
             entries, head_sha, candidate = inspect_environment()
-            problems = validate_files(entries, candidate)
+            problems = validate_gate_integrity(Path(os.environ["BASE_DIR"]), candidate)
+            problems.extend(validate_files(entries, candidate))
             if problems:
                 for problem in problems:
                     print(f"::error::{problem}", file=sys.stderr)
@@ -240,10 +219,16 @@ def main(argv: list[str] | None = None) -> int:
             _write_outputs({"source": source, "head_sha": head_sha})
             print(f"checked PR head SHA: {head_sha}; source: {source}")
             return 0
+        if args.command == "classify":
+            entries, head_sha = classify_environment()
+            source = str(source_change(entries)).lower()
+            _write_outputs({"source": source, "head_sha": head_sha})
+            print(f"checked PR head SHA: {head_sha}; source: {source}")
+            return 0
         needs = json.loads(args.json)
         if not isinstance(needs, dict):
             raise ValueError("needs JSON must be an object")
-        failures = aggregate(needs, args.source)
+        failures = aggregate(needs)
         if failures:
             print(f"::error::required validation did not succeed: {', '.join(failures)}")
             return 1

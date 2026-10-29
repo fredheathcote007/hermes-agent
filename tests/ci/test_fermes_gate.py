@@ -1,31 +1,32 @@
 """Behavior contracts for the trusted, fail-closed required-check gate."""
 
 import subprocess
+from pathlib import Path
 
 from scripts.ci.fermes_gate import (
+    GATE_CRITICAL_FILES,
     ChangedPath,
     aggregate,
     inspect_environment,
     parse_name_status,
     source_change,
+    validate_gate_integrity,
     validate_files,
     _validate_markdown,
 )
 
 
-def test_aggregate_requires_trusted_inspect_and_expected_source_result():
-    needs = {"inspect": {"result": "success"}, "source-test": {"result": "success"}}
-    assert aggregate(needs, "true") == []
-    assert aggregate({"inspect": {"result": "success"}, "source-test": {"result": "skipped"}}, "true")
-    assert aggregate({"inspect": {"result": "success"}, "source-test": {"result": "skipped"}}, "false") == []
-    assert aggregate({"inspect": {"result": "failure"}, "source-test": {"result": "skipped"}}, "false")
-    assert aggregate(needs, "") == ["inspect.source=missing-or-invalid"]
+def test_aggregate_requires_trusted_inspect_success():
+    assert aggregate({"inspect": {"result": "success"}}) == []
+    assert aggregate({"inspect": {"result": "failure"}})
+    assert aggregate({})
 
 
 def test_unknown_categories_require_source_tests():
-    assert not source_change(["README.md", ".github/workflows/fermes-pr-checks.yml"])
+    assert not source_change(["README.md"])
     assert source_change(["website/docs/guide.txt"])
     assert source_change([".github/workflows/docker.yml"])
+    assert source_change([".github/workflows/fermes-pr-checks.yml"])
 
 
 def test_name_status_handles_deletions_renames_and_non_utf8_paths():
@@ -44,6 +45,32 @@ def test_selected_metadata_is_checked_and_missing_metadata_fails(tmp_path):
     (tmp_path / "README.md").write_text("```\n", encoding="utf-8")
     assert validate_files([ChangedPath("A", "README.md")], tmp_path)
     assert validate_files([ChangedPath("A", ".github/workflows/new.yml")], tmp_path)
+
+
+def test_gate_workflow_and_helper_forgery_or_deletion_fails_closed(tmp_path):
+    base, candidate = tmp_path / "base", tmp_path / "candidate"
+    for root in (base, candidate):
+        for name in GATE_CRITICAL_FILES:
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"trusted {name}\n".encode())
+    assert validate_gate_integrity(base, candidate) == []
+
+    (candidate / GATE_CRITICAL_FILES[0]).write_bytes(b"forged gate\n")
+    assert validate_gate_integrity(base, candidate)
+    (candidate / GATE_CRITICAL_FILES[0]).write_bytes((base / GATE_CRITICAL_FILES[0]).read_bytes())
+    (candidate / GATE_CRITICAL_FILES[-1]).unlink()
+    assert validate_gate_integrity(base, candidate)
+
+
+def test_gate_bootstrap_fails_when_trusted_base_lacks_critical_file(tmp_path):
+    base, candidate = tmp_path / "base", tmp_path / "candidate"
+    candidate.mkdir()
+    for name in GATE_CRITICAL_FILES:
+        path = candidate / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"candidate\n")
+    assert any("trusted base is missing" in problem for problem in validate_gate_integrity(base, candidate))
 
 
 def test_inspection_uses_trusted_helper_even_when_candidate_replaces_it(tmp_path, monkeypatch):
@@ -70,6 +97,25 @@ def test_inspection_uses_trusted_helper_even_when_candidate_replaces_it(tmp_path
     entries, checked_head, _ = inspect_environment()
     assert checked_head == head
     assert any(entry.path == "scripts/ci/fermes_gate.py" for entry in entries)
+
+
+def test_inspection_binds_to_exact_synthetic_merge_head(tmp_path, monkeypatch):
+    pr56_head = "b8d56ec9cb277eb4311e4bdc84bb2220d21d7417"
+    source_root = Path(__file__).resolve().parents[2]
+    assert subprocess.run(["git", "cat-file", "-e", pr56_head], cwd=source_root, check=False).returncode == 0
+    candidate = tmp_path / "candidate"
+    subprocess.run(["git", "clone", "-q", "--no-local", str(source_root), str(candidate)], check=True)
+    base = subprocess.check_output(["git", "rev-parse", "origin/main"], cwd=candidate, text=True).strip()
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=candidate, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=candidate, check=True)
+    subprocess.run(["git", "checkout", "-q", "-B", "main", base], cwd=candidate, check=True)
+    subprocess.run(["git", "merge", "--no-ff", "-qm", "PR56 synthetic merge", pr56_head], cwd=candidate, check=True)
+    monkeypatch.setenv("BASE_DIR", str(candidate))
+    monkeypatch.setenv("CANDIDATE_DIR", str(candidate))
+    monkeypatch.setenv("BASE_SHA", base)
+    monkeypatch.setenv("PR_HEAD_SHA", pr56_head)
+    _, checked_head, _ = inspect_environment()
+    assert checked_head == pr56_head
 
 
 def test_diff_check_is_a_real_git_check(tmp_path):
