@@ -1,0 +1,102 @@
+name: Fermes Fork CI
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fermes-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    name: Inspect PR with trusted base validator
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source: ${{ steps.inspect.outputs.source }}
+      head_sha: ${{ steps.inspect.outputs.head_sha }}
+    steps:
+      - name: Checkout protected base revision
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout GitHub synthetic merge ref as data
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify ancestry and inspect immutable diff
+        id: inspect
+        env:
+          BASE_DIR: ${{ github.workspace }}/base
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 base/scripts/ci/fermes_gate.py inspect
+
+  source-test:
+    name: Test source changes in candidate
+    if: ${{ needs.inspect.outputs.source == 'true' }}
+    needs: [inspect]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout GitHub synthetic merge ref
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: '0.13.3'
+          enable-cache: false
+      - name: Prepare locked test environment
+        working-directory: candidate
+        run: uv sync --locked --python 3.14 --group dev --group test --no-install-project
+      - name: Run blocking lint and health checks for source changes
+        working-directory: candidate
+        run: .venv/bin/python scripts/check --only ruff,health
+      - name: Run the repository test suite for source changes
+        working-directory: candidate
+        run: scripts/run_tests.sh
+
+  required:
+    name: Fermes fork required checks
+    if: ${{ always() }}
+    needs: [inspect, source-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout protected base revision
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Fail closed unless trusted validation has expected result
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          SOURCE: ${{ needs.inspect.outputs.source }}
+        run: python3 base/scripts/ci/fermes_gate.py aggregate --json "$NEEDS_JSON" --source "$SOURCE"
