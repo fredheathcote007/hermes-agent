@@ -5,10 +5,11 @@ on:
     branches: [main]
     types: [opened, reopened, synchronize, ready_for_review, edited]
 
-# Candidate code is executed below, so this workflow has no repository token,
-# secrets, publishing, or write-capable context. The target workflow separately
-# checks this file byte-for-byte against trusted base.
-permissions: {}
+# Candidate code runs with only contents:read, needed for reliable checkout.
+# No write-capable permissions, persisted credentials, secrets or publishing.
+# The trusted gate verifies this workflow byte-for-byte against protected base.
+permissions:
+  contents: read
 
 concurrency:
   group: fermes-source-pr-${{ github.event.pull_request.number }}
