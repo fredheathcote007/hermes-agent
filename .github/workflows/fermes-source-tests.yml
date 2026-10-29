@@ -1,0 +1,90 @@
+name: Fermes unprivileged PR tests
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+# Candidate code runs with only contents:read, needed for reliable checkout.
+# No write-capable permissions, persisted credentials, secrets or publishing.
+# The trusted gate verifies this workflow byte-for-byte against protected base.
+permissions:
+  contents: read
+
+concurrency:
+  group: fermes-source-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Fermes unprivileged PR tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout protected base revision
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout GitHub synthetic merge ref
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify and validate the exact synthetic merge with base code
+        id: classify
+        working-directory: base
+        env:
+          BASE_DIR: ${{ github.workspace }}/base
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci/fermes_gate.py classify
+      - name: Validate docs-only change
+        if: ${{ steps.classify.outputs.source == 'false' }}
+        run: echo "Trusted base classifier validated the Markdown-only change"
+      - name: Set up Python 3.14
+        if: ${{ steps.classify.outputs.source == 'true' }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Set up pinned uv
+        if: ${{ steps.classify.outputs.source == 'true' }}
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          # Keep this equal to pm/lock.json; the source lane must use the
+          # same verified toolchain as the repository's other test lanes.
+          version: '0.12.3'
+          enable-cache: false
+      - name: Prepare locked test environment
+        if: ${{ steps.classify.outputs.source == 'true' }}
+        working-directory: candidate
+        run: uv sync --locked --python 3.14 --extra all --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --group dev --group test --no-install-project
+      - name: Run blocking lint and health checks for source changes
+        if: ${{ steps.classify.outputs.source == 'true' }}
+        working-directory: candidate
+        run: .venv/bin/python scripts/check --only ruff,health
+      - name: Run all focused CI gate tests
+        if: ${{ steps.classify.outputs.source == 'true' }}
+        working-directory: candidate
+        run: scripts/run_tests.sh
+        env:
+          HERMES_PYTHON: ${{ github.workspace }}/candidate/.venv/bin/python
+          HERMES_TEST_PATHS: tests/ci/test_fermes_gate.py
+          HERMES_TEST_WORKERS: 2
+          HERMES_TEST_FILE_TIMEOUT: 600
+      - name: Run bounded repository regression slice
+        if: ${{ steps.classify.outputs.source == 'true' }}
+        working-directory: candidate
+        run: scripts/run_tests.sh
+        env:
+          HERMES_PYTHON: ${{ github.workspace }}/candidate/.venv/bin/python
+          HERMES_TEST_SLICE: 1/4
+          HERMES_TEST_WORKERS: 4
+          HERMES_TEST_FILE_TIMEOUT: 600

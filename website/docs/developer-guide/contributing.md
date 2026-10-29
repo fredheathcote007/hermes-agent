@@ -137,6 +137,36 @@ Choose the highest (least-footprint) rung that correctly solves the problem:
    unreachable via terminal + file or an MCP server (terminal, read_file, web_search,
    browser_navigate).
 
+## Fermes fork PR gate
+
+The fork-safe PR gate has two independent required statuses on `main`:
+
+- `Fermes fork required checks` runs from `pull_request_target`, checks only the protected base
+  checkout, and treats the synthetic merge as data. It verifies the exact base/head ancestry,
+  Markdown metadata, and byte-for-byte immutability of both Fermes workflows and the trusted
+  gate helper. It never runs candidate scripts.
+- `Fermes unprivileged PR tests` runs from `pull_request` with `permissions: {}`. It validates
+  Markdown-only changes, or prepares the locked environment and runs the candidate lint, health,
+  and test suites on `ubuntu-latest` for source changes. It has no secrets, publishing, or write
+  permissions.
+
+There are deliberately no path filters: docs-only changes and workflow edits receive both
+statuses. Any non-Markdown change, including an unrelated CI workflow, is a source change. A
+changed, removed, or missing gate-critical file fails the trusted status; this is an owner-managed
+bootstrap boundary, not a candidate-editable migration mechanism. The byte comparison protects
+the workflow/helper definitions, but cannot make an unprivileged source test truthful about code
+that it executes; the required-status identity must therefore remain an Actions-owned check, and
+the ruleset must require both exact names rather than trusting a user-created status with a similar
+label.
+
+For the initial bootstrap, an owner first obtains independent Cursor Security Reviewer and Bugbot
+approval, enables both real statuses in a controlled ruleset transition, and does not retain the
+old disabled check as a temporary requirement. After the trusted workflow is on `main`, rerun the
+PR56 synthetic merge at its exact head and verify both statuses are green. Only then update the
+ruleset to require `Fermes fork required checks` and `Fermes unprivileged PR tests`, preserving
+all other active branch rules and without an administrator bypass. Future gate changes require
+the same owner-controlled process and must always leave at least one real enforced check in place.
+
 ## Common contribution paths
 
 - Building a custom/local tool without modifying Hermes core? Start with [Build a Hermes Plugin](../developer-guide/plugins/index.md)
