@@ -57,17 +57,33 @@ jobs:
         if: ${{ steps.classify.outputs.source == 'true' }}
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
-          version: '0.13.3'
+          # Keep this equal to pm/lock.json; the source lane must use the
+          # same verified toolchain as the repository's other test lanes.
+          version: '0.12.3'
           enable-cache: false
       - name: Prepare locked test environment
         if: ${{ steps.classify.outputs.source == 'true' }}
         working-directory: candidate
-        run: uv sync --locked --python 3.14 --group dev --group test --no-install-project
+        run: uv sync --locked --python 3.14 --extra all --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --group dev --group test --no-install-project
       - name: Run blocking lint and health checks for source changes
         if: ${{ steps.classify.outputs.source == 'true' }}
         working-directory: candidate
         run: .venv/bin/python scripts/check --only ruff,health
-      - name: Run the repository test suite for source changes
+      - name: Run all focused CI gate tests
         if: ${{ steps.classify.outputs.source == 'true' }}
         working-directory: candidate
         run: scripts/run_tests.sh
+        env:
+          HERMES_PYTHON: ${{ github.workspace }}/candidate/.venv/bin/python
+          HERMES_TEST_PATHS: tests/ci/test_fermes_gate.py
+          HERMES_TEST_WORKERS: 2
+          HERMES_TEST_FILE_TIMEOUT: 600
+      - name: Run bounded repository regression slice
+        if: ${{ steps.classify.outputs.source == 'true' }}
+        working-directory: candidate
+        run: scripts/run_tests.sh
+        env:
+          HERMES_PYTHON: ${{ github.workspace }}/candidate/.venv/bin/python
+          HERMES_TEST_SLICE: 1/4
+          HERMES_TEST_WORKERS: 4
+          HERMES_TEST_FILE_TIMEOUT: 600

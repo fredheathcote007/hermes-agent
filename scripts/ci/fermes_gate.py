@@ -34,7 +34,11 @@ class ChangedPath:
 def _git(root: Path, *args: str, check: bool = True) -> bytes:
     try:
         result = subprocess.run(
-            ["git", *args], cwd=root, check=False, capture_output=True, timeout=_GIT_TIMEOUT_SECONDS
+            ["git", *args],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
         raise ValueError(f"git {' '.join(args)} timed out") from exc
@@ -84,8 +88,23 @@ def is_markdown(path: str) -> bool:
 
 def source_change(paths: Iterable[str | ChangedPath]) -> bool:
     """Unknown and code categories require the substantive source lane."""
-    names = (item.path if isinstance(item, ChangedPath) else item for item in paths)
-    return any(not is_markdown(name) for name in names)
+
+    def is_docs_only_markdown(name: str) -> bool:
+        # Fail closed: unknown Markdown may contain runtime prompts/skills.
+        return is_markdown(name) and (
+            name.startswith(("docs/", "website/docs/"))
+            or name in {"README.md", "CONTRIBUTING.md", "CHANGELOG.md"}
+        )
+
+    names = (
+        name
+        for item in paths
+        for name in (
+            (item.path, item.old_path) if isinstance(item, ChangedPath) else (item,)
+        )
+        if name is not None
+    )
+    return any(not is_docs_only_markdown(name) for name in names)
 
 
 def _validate_markdown(data: bytes, name: str) -> list[str]:
@@ -93,7 +112,9 @@ def _validate_markdown(data: bytes, name: str) -> list[str]:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return [f"selected Markdown metadata is not UTF-8: {name}"]
-    fence_count = sum(line.lstrip().startswith(("```", "~~~")) for line in text.splitlines())
+    fence_count = sum(
+        line.lstrip().startswith(("```", "~~~")) for line in text.splitlines()
+    )
     problems = [f"unclosed fenced code block: {name}"] if fence_count % 2 else []
     # Exactly two end-of-line spaces are intentional Markdown hard breaks.
     for number, line in enumerate(text.splitlines(), start=1):
@@ -107,12 +128,20 @@ def validate_files(entries: Iterable[ChangedPath], root: Path) -> list[str]:
     """Validate existing text metadata; deleted/binary non-metadata is legitimate."""
     problems: list[str] = []
     for entry in entries:
-        if entry.status == "D" or not (is_markdown(entry.path) or is_workflow(entry.path)):
+        if entry.status == "D" or not (
+            is_markdown(entry.path) or is_workflow(entry.path)
+        ):
             continue
         try:
-            data = (root / entry.path).read_bytes()
+            changed_path = root / entry.path
+            if changed_path.is_symlink():
+                problems.append(f"selected metadata path is a symlink: {entry.path}")
+                continue
+            data = changed_path.read_bytes()
         except FileNotFoundError:
-            problems.append(f"changed metadata path is missing from merge checkout: {entry.path}")
+            problems.append(
+                f"changed metadata path is missing from merge checkout: {entry.path}"
+            )
             continue
         if b"\0" in data:
             problems.append(f"selected metadata contains NUL bytes: {entry.path}")
@@ -128,13 +157,30 @@ def validate_gate_integrity(base: Path, candidate: Path) -> list[str]:
     for name in GATE_CRITICAL_FILES:
         base_path, candidate_path = base / name, candidate / name
         if not base_path.is_file() or base_path.is_symlink():
-            problems.append(f"trusted base is missing gate-critical file: {name}; owner bootstrap required")
+            problems.append(
+                f"trusted base is missing gate-critical file: {name}; owner bootstrap required"
+            )
             continue
         if not candidate_path.is_file() or candidate_path.is_symlink():
             problems.append(f"candidate removed or replaced gate-critical file: {name}")
             continue
         if base_path.read_bytes() != candidate_path.read_bytes():
-            problems.append(f"candidate changed gate-critical file: {name}; owner-controlled migration required")
+            problems.append(
+                f"candidate changed gate-critical file: {name}; owner-controlled migration required"
+            )
+    return problems
+
+
+def validate_ci_path_integrity(entries: Iterable[ChangedPath]) -> list[str]:
+    """Reject every workflow/action change before candidate code can run."""
+    problems = []
+    for entry in entries:
+        names = (entry.path, entry.old_path)
+        for name in names:
+            if name and name.startswith(_WORKFLOW_ROOTS):
+                problems.append(
+                    f"candidate changed protected CI path: {name}; owner-controlled migration required"
+                )
     return problems
 
 
@@ -151,18 +197,34 @@ def inspect_environment() -> tuple[list[ChangedPath], str, Path]:
     if not base.is_dir() or not candidate.is_dir():
         raise ValueError("base and candidate checkouts are required")
     base_sha, head_sha = _require_sha("BASE_SHA"), _require_sha("PR_HEAD_SHA")
-    parents = _git(candidate, "rev-list", "--parents", "-n", "1", "HEAD").decode().split()
+    parents = (
+        _git(candidate, "rev-list", "--parents", "-n", "1", "HEAD").decode().split()
+    )
     if len(parents) != 3 or parents[1] != base_sha or parents[2] != head_sha:
-        raise ValueError("synthetic merge must have base SHA as parent 1 and exact PR head as parent 2")
-    entries = parse_name_status(_git(candidate, "diff", "--name-status", "-z", base_sha, "HEAD"))
+        raise ValueError(
+            "synthetic merge must have base SHA as parent 1 and exact PR head as parent 2"
+        )
+    entries = parse_name_status(
+        _git(candidate, "diff", "--name-status", "--no-renames", "-z", base_sha, "HEAD")
+    )
     result = subprocess.run(
         [
-            "git", "diff", "--check", base_sha, "HEAD", "--", ".",
+            "git",
+            f"--attr-source={base_sha}",
+            "diff",
+            "--check",
+            base_sha,
+            "HEAD",
+            "--",
+            ".",
             ":(exclude,glob)**/*.md",
             ":(exclude,glob)**/*.mdx",
             ":(exclude,glob)**/*.markdown",
         ],
-        cwd=candidate, capture_output=True, check=False, timeout=_GIT_TIMEOUT_SECONDS
+        cwd=candidate,
+        capture_output=True,
+        check=False,
+        timeout=_GIT_TIMEOUT_SECONDS,
     )
     if result.returncode:
         raise ValueError("git diff --check rejected the candidate diff")
@@ -173,6 +235,7 @@ def classify_environment() -> tuple[list[ChangedPath], str]:
     """Classify the exact synthetic merge using the trusted checkout's helper."""
     entries, head_sha, candidate = inspect_environment()
     problems = validate_files(entries, candidate)
+    problems.extend(validate_ci_path_integrity(entries))
     if problems:
         raise ValueError("; ".join(problems))
     return entries, head_sha
@@ -194,7 +257,9 @@ def aggregate(needs: dict[str, object]) -> list[str]:
     inspect = needs.get("inspect")
     failures: list[str] = []
     if not isinstance(inspect, dict) or inspect.get("result") != "success":
-        failures.append(f"inspect={inspect.get('result', 'missing') if isinstance(inspect, dict) else 'missing'}")
+        failures.append(
+            f"inspect={inspect.get('result', 'missing') if isinstance(inspect, dict) else 'missing'}"
+        )
     return failures
 
 
@@ -210,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "inspect":
             entries, head_sha, candidate = inspect_environment()
             problems = validate_gate_integrity(Path(os.environ["BASE_DIR"]), candidate)
+            problems.extend(validate_ci_path_integrity(entries))
             problems.extend(validate_files(entries, candidate))
             if problems:
                 for problem in problems:
@@ -230,7 +296,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("needs JSON must be an object")
         failures = aggregate(needs)
         if failures:
-            print(f"::error::required validation did not succeed: {', '.join(failures)}")
+            print(
+                f"::error::required validation did not succeed: {', '.join(failures)}"
+            )
             return 1
         print("all required validation succeeded")
         return 0
