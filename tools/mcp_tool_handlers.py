@@ -106,7 +106,8 @@ def _is_secret_argument_name(key: Any) -> bool:
     compact = "".join(char for char in folded if char.isalnum())
     is_auth_header = (
         compact.endswith("authorization")
-        or (folded.startswith("x-") and "auth" in compact)
+        or compact.endswith("auth")
+        or compact == "oauth"
     )
     # Cookie headers and cookie-shaped fields carry opaque session material even when the
     # value does not resemble a credential to the text redactor. Keep descriptive cookie
@@ -202,13 +203,20 @@ def _escape_trust_gate_controls(text: str) -> str:
     )
 
 
-def _format_trust_gate_arguments(args: Any) -> Optional[str]:
-    """Return a force-redacted, bounded JSON preview, or ``None`` if it is unsafe to render."""
+def _format_trust_gate_arguments(args: Any, *, compact: bool = False) -> Optional[str]:
+    """Return a force-redacted, bounded JSON preview, or ``None`` if it is unsafe to render.
+
+    Gateway approval commands use compact JSON so the strict text fallback has room for the
+    complete server/tool/arguments payload. CLI/TUI keeps the indented 1200-character preview.
+    """
     from agent.redact import redact_sensitive_text
 
     try:
         sanitized = _mask_secret_argument_fields(args)
-        rendered = json.dumps(sanitized, ensure_ascii=False, indent=2, allow_nan=False)
+        rendered = json.dumps(
+            sanitized, ensure_ascii=False, allow_nan=False,
+            **({"separators": (",", ":")} if compact else {"indent": 2}),
+        )
         rendered = _escape_trust_gate_controls(rendered)
         # Defense in depth for any serializer expansion; the source was already redacted and
         # structured-budgeted above, so this never slices raw argument data.
@@ -256,6 +264,35 @@ def _trust_gate_check(server_name: str, tool_name: str, booked: Optional[list] =
         return _ask_for_call(server_name, tool_name, charge, booked, gated=gated, args=args)
 
 
+def _gateway_mcp_approval_context() -> bool:
+    """Whether the current MCP consent can reach a gateway/API approval surface."""
+    from tools import approval_context as _ctx
+
+    return (_ctx._is_gateway_approval_context()
+            or (_ctx._get_session_platform() == "api_server"
+                and not _ctx._is_cron_approval_context()
+                and not _ctx._is_single_query_approval_context()))
+
+
+def _format_gateway_trust_gate_command(server_name: str, tool_name: str, args: Any) -> Optional[str]:
+    """Build the complete compact payload that must fit the gateway fallback command field."""
+    argument_preview = _format_trust_gate_arguments(args, compact=True)
+    if argument_preview is None:
+        return None
+    try:
+        payload = json.dumps(
+            {"server": server_name, "tool": tool_name, "arguments": json.loads(argument_preview)},
+            ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+        )
+        from tools.approval_prompt import prepare_gateway_approval_command
+        prepared = prepare_gateway_approval_command(f"MCP untrusted call {payload}")
+        from gateway.platforms.base_exec_approval import GATEWAY_APPROVAL_COMMAND_MAX_CHARS
+        return (prepared if prepared is not None
+                and len(prepared) <= GATEWAY_APPROVAL_COMMAND_MAX_CHARS else None)
+    except (TypeError, ValueError):
+        return None
+
+
 def _ask_for_call(server_name: str, tool_name: str, charge, booked: Optional[list], *,
                   gated: bool = True, args: Any = None) -> Optional[str]:
     """Ask the user about one gated and/or costed call; book the charge only on an explicit yes."""
@@ -272,7 +309,16 @@ def _ask_for_call(server_name: str, tool_name: str, charge, booked: Optional[lis
                 return None
             over = True
     extra = charge.lines(spent) if charge is not None else []
-    if gated:
+    if gated and _gateway_mcp_approval_context():
+        message = _format_gateway_trust_gate_command(server_name, tool_name, args)
+        if message is None:
+            return tool_error(f"MCP tool '{tool_name}' on untrusted server '{server_name}' was blocked: its "
+                              "complete approval payload does not fit the gateway display limit. "
+                              "Reduce the payload and try again.")
+        description = ("MCP untrusted call; approve once only after reviewing the complete payload."
+                       + (f" {' '.join(extra)}" if extra else ""))
+        title = f"MCP server '{server_name}' is asking"
+    elif gated:
         argument_preview = _format_trust_gate_arguments(args)
         if argument_preview is None:
             return tool_error(f"MCP tool '{tool_name}' on untrusted server '{server_name}' was blocked: its "

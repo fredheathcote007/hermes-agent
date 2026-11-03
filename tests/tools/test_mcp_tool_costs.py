@@ -131,6 +131,27 @@ def test_oversized_untrusted_costed_call_does_not_prompt_or_book(session):
     assert mcp_tool_costs._spent == {}
 
 
+def test_gateway_oversized_costed_call_does_not_prompt_or_book(session):
+    """The gateway display refusal happens before consent and before cost booking."""
+    from gateway.session_context import clear_session_vars, set_session_vars
+
+    _register({"trust": "untrusted", "tool_costs": {"paid_render": 40}, "spend_limit": 100})
+    session_tokens = set_session_vars(platform="telegram", session_key="gateway-costed-large")
+    token = set_current_session_key("gateway-costed-large")
+    try:
+        args = {"benign_prefix": "x" * 180, "late_mutating_target": "/production/database"}
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+            result = json.loads(handlers._make_tool_handler("srv", "paid_render", 30.0)(args))
+    finally:
+        reset_current_session_key(token)
+        clear_session_vars(session_tokens)
+
+    consent.assert_not_called()
+    session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert "gateway display limit" in result["error"]
+
+
 def test_full_trust_asks_only_past_the_limit_and_unattended_refuses_without_dispatch(session):
     from gateway.session_context import clear_session_vars, set_session_vars
     _register(COSTED)

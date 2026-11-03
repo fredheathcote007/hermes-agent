@@ -210,6 +210,30 @@ class TestElicitationHandlerContextBridge:
 
         assert result.action == "decline"
 
+    def test_long_gateway_elicitation_message_is_not_mcp_trust_capped(self):
+        """Generic server elicitation keeps its existing gateway message contract."""
+        from gateway.session_context import clear_session_vars, set_session_vars
+        from tools import approval, approval_prompt
+
+        message = "please confirm " + "x" * 400
+        session_key = "long-generic-elicitation"
+        tokens = set_session_vars(platform="telegram", session_key=session_key)
+        approval.register_gateway_notify(session_key, lambda _data: None)
+        seen = {}
+
+        def capture(_session_key, _notify, approval_data, **_kwargs):
+            seen.update(approval_data)
+            return {"resolved": True, "choice": "deny"}
+
+        try:
+            with patch.object(approval_prompt._gw, "_await_gateway_decision", capture):
+                assert approval_prompt.request_elicitation_consent(message, "generic") == "decline"
+        finally:
+            approval.unregister_gateway_notify(session_key)
+            clear_session_vars(tokens)
+
+        assert seen["command"] == message
+
 
 class TestRequestedSchemaFieldName:
     """The requested schema must be read off the *real* SDK model.

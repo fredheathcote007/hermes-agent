@@ -21,6 +21,11 @@ from agent.i18n import t
 EA_HEADER_TEXT = "Hermes wants to run a command that needs your OK"
 EA_REASON_LABEL_TEXT = "Why it was flagged"
 
+# The plain gateway fallback renders only the first 200 characters of the command.  Untrusted MCP
+# trust-gate payloads must fit this strictest approval surface because late arguments can be the
+# mutating part of the call; native adapters have larger budgets but are not a safe lower bound.
+GATEWAY_APPROVAL_COMMAND_MAX_CHARS = 200
+
 # Timeout notice posted when nobody answered the prompt (``{window}`` = "5 minutes").
 APPROVAL_TIMED_OUT_NOTICE = (
     "⌛ Approval timed out after {window} — the command was NOT run. "

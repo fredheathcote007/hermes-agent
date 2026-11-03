@@ -594,8 +594,10 @@ def _format_exec_approval_fallback(
     the button card (``BasePlatformAdapter._format_exec_approval``), plus the typed ``/approve``
     steps a surface without buttons needs."""
     from gateway.platforms.base_exec_approval import (
-        approval_timeout_seconds, ea_header_text, ea_reason_label_text, format_approval_deadline_line)
-    cmd_preview = command[:200] + "..." if len(command) > 200 else command
+        GATEWAY_APPROVAL_COMMAND_MAX_CHARS, approval_timeout_seconds, ea_header_text,
+        ea_reason_label_text, format_approval_deadline_line)
+    cmd_preview = (command[:GATEWAY_APPROVAL_COMMAND_MAX_CHARS] + "..."
+                   if len(command) > GATEWAY_APPROVAL_COMMAND_MAX_CHARS else command)
     heading = (t("gateway.exec_approval.smart_deny_heading") if smart_denied
                else f"⚠️ **{ea_header_text()}**")
 

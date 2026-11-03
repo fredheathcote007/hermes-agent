@@ -257,6 +257,73 @@ class TestTrustGateAtCallTime:
         assert json.loads(raw) == {"result": "ok"}
         fake_session.call_tool.assert_awaited_once()
 
+    def test_gateway_prompt_contains_complete_compact_payload(self, fake_session, monkeypatch):
+        """The real gateway consent route receives the whole MCP payload, not a clipped prefix."""
+        from gateway.session_context import clear_session_vars, set_session_vars
+        from tools import approval, approval_prompt
+        from tools.approval_context import reset_current_session_key, set_current_session_key
+
+        _set_trust("srv", "untrusted")
+        session_key = "gateway-mcp-complete"
+        session_tokens = set_session_vars(platform="telegram", session_key=session_key)
+        key_token = set_current_session_key(session_key)
+        seen = []
+
+        def capture(_session_key, _notify, approval_data, **_kwargs):
+            seen.append(dict(approval_data))
+            return {"resolved": True, "choice": "deny"}
+
+        approval.register_gateway_notify(session_key, lambda _data: None)
+        monkeypatch.setattr(approval_prompt._gw, "_await_gateway_decision", capture)
+        try:
+            raw = _mcp_handlers._make_tool_handler("srv", "mutate", 30.0)(
+                {"target": "/production/database", "operation": "delete"}
+            )
+        finally:
+            approval.unregister_gateway_notify(session_key)
+            reset_current_session_key(key_token)
+            clear_session_vars(session_tokens)
+
+        assert "error" in json.loads(raw)
+        assert len(seen) == 1
+        command = seen[0]["command"]
+        assert len(command) <= 200
+        assert '"server":"srv"' in command
+        assert '"tool":"mutate"' in command
+        assert '"target":"/production/database"' in command
+        assert '"operation":"delete"' in command
+
+        from gateway.run import _format_exec_approval_fallback
+        rendered = _format_exec_approval_fallback(command, "review", "/")
+        assert command in rendered
+        for fragment in ('"server":"srv"', '"tool":"mutate"',
+                         '"target":"/production/database"', '"operation":"delete"'):
+            assert fragment in rendered
+
+    def test_gateway_oversized_payload_denies_before_consent_and_rpc(self, fake_session):
+        """A late mutating argument cannot hide beyond the gateway's 200-character command budget."""
+        from gateway.session_context import clear_session_vars, set_session_vars
+        from tools import approval_prompt
+        from tools.approval_context import reset_current_session_key, set_current_session_key
+
+        _set_trust("srv", "untrusted")
+        session_tokens = set_session_vars(platform="telegram", session_key="gateway-mcp-large")
+        key_token = set_current_session_key("gateway-mcp-large")
+        args = {"benign_prefix": "x" * 180, "late_mutating_target": "/production/database"}
+        try:
+            with patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+                raw = _mcp_handlers._make_tool_handler("srv", "mutate", 30.0)(args)
+        finally:
+            reset_current_session_key(key_token)
+            clear_session_vars(session_tokens)
+
+        consent.assert_not_called()
+        fake_session.call_tool.assert_not_awaited()
+        parsed = json.loads(raw)
+        assert "error" in parsed
+        assert "gateway display limit" in parsed["error"]
+        assert "/production/database" not in parsed["error"]
+
     def test_approval_card_shows_bounded_force_redacted_arguments(self, fake_session, monkeypatch):
         """The operator sees useful arguments without secrets or invisible controls."""
         import agent.redact
@@ -313,6 +380,33 @@ class TestTrustGateAtCallTime:
         assert '"value": "Alice"' in message
         assert f'"{author_key}": "Bob"' in message
         fake_session.call_tool.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("key", "is_secret"),
+        [
+            ("auth", True),
+            ("AUTH", True),
+            ("Custom-Auth", True),
+            ("custom-auth", True),
+            ("Proxy-Auth", True),
+            ("api_auth", True),
+            ("oauth", True),
+            ("OAuth", True),
+            ("Proxy-Authorization", True),
+            ("X-Authorization", True),
+            ("Cookie", True),
+            ("Set-Cookie", True),
+            ("author", False),
+            ("Author", False),
+            ("AUTHOR", False),
+            ("authority", False),
+            ("authorisation", False),
+            ("X-Request-Id", False),
+        ],
+    )
+    def test_secret_argument_classifier_table(self, key, is_secret):
+        """Classify credential-shaped names without hiding descriptive metadata."""
+        assert _mcp_handlers._is_secret_argument_name(key) is is_secret
 
     def test_authorization_and_cookie_header_shapes_are_masked(self, fake_session):
         """Nested header maps and name/value pairs mask opaque auth and cookie values."""
@@ -435,17 +529,43 @@ class TestTrustGateAtCallTime:
         _set_trust("srv", "untrusted")
         args = {
             "auth": "opaque-auth-secret",
-            "headers": {"X-Custom-Auth": "opaque-header-secret"},
-            "header": {"name": "X-Custom-Auth", "value": "opaque-object-secret"},
+            "AUTH": "opaque-upper-auth-secret",
+            "OAuth": "opaque-mixed-oauth-secret",
+            "Custom-Auth": "opaque-custom-secret",
+            "Proxy-Auth": "opaque-proxy-secret",
+            "api_auth": "opaque-api-secret",
+            "oauth": "opaque-oauth-secret",
+            "headers": {
+                "X-Custom-Auth": "opaque-header-secret",
+                "CUSTOM-AUTH": "opaque-upper-header-secret",
+            },
+            "header": {"name": "api_auth", "value": "opaque-object-secret"},
+            "header_upper": {"name": "PROXY-AUTH", "value": "opaque-upper-object-secret"},
         }
         with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
             _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
 
         message = consent.call_args.args[0]
-        for secret in ("opaque-auth-secret", "opaque-header-secret", "opaque-object-secret"):
+        for secret in (
+            "opaque-auth-secret",
+            "opaque-upper-auth-secret",
+            "opaque-mixed-oauth-secret",
+            "opaque-custom-secret",
+            "opaque-proxy-secret",
+            "opaque-api-secret",
+            "opaque-oauth-secret",
+            "opaque-header-secret",
+            "opaque-upper-header-secret",
+            "opaque-object-secret",
+            "opaque-upper-object-secret",
+        ):
             assert secret not in message
-        assert '"X-Custom-Auth": "***"' in message
-        assert '"value": "***"' in message
+        for key in (
+            "auth", "AUTH", "OAuth", "Custom-Auth", "Proxy-Auth", "api_auth", "oauth",
+            "X-Custom-Auth", "CUSTOM-AUTH",
+        ):
+            assert f'"{key}": "***"' in message
+        assert message.count('"value": "***"') == 2
         fake_session.call_tool.assert_not_awaited()
 
     def test_redaction_sees_token_before_preview_size_check(self, fake_session, monkeypatch):

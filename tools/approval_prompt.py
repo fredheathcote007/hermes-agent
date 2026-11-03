@@ -10,11 +10,35 @@ import logging
 import os
 import sys
 import threading
+import unicodedata
 from tools import approval_context as _ctx, approval_gateway_wait as _gw
 from tools.approval_human_wait import activity_heartbeat, human_wait_window
 from tools.interrupt import is_interrupted
 
 logger = logging.getLogger("tools.approval")
+
+
+def prepare_gateway_approval_command(command: str) -> str | None:
+    """Return a fully redacted, control-escaped gateway command.
+
+    The MCP trust-gate caller applies the gateway fallback's length limit after this preparation,
+    before the approval queue/notify path. Keeping preparation separate preserves generic
+    elicitation and other approval callers.
+    """
+    from agent.redact import redact_sensitive_text
+
+    def escape_controls(value: str) -> str:
+        return "".join(
+            f"\\u{ord(char):04x}" if unicodedata.category(char) in ("Cc", "Cf") else char
+            for char in value
+        )
+
+    try:
+        prepared = escape_controls(redact_sensitive_text(str(command or ""), force=True))
+        prepared = escape_controls(redact_sensitive_text(prepared, force=True))
+    except Exception:
+        return None
+    return prepared
 
 
 def prompt_dangerous_approval(command: str, description: str, timeout_seconds: int | None = None,
