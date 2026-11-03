@@ -127,6 +127,34 @@ class TestTrustGateAtCallTime:
         fake_session.call_tool.assert_not_awaited()
         assert "error" in json.loads(raw)
 
+    @pytest.mark.parametrize("bypass", ["session_yolo", "global_yolo", "mode_off"])
+    def test_real_consent_routing_declines_unattended_bypass(self, fake_session, monkeypatch, bypass):
+        """YOLO and approval-off policy never grant the separate MCP trust gate."""
+        from gateway.session_context import clear_session_vars, set_session_vars
+        from tools import approval
+        from tools.approval_context import reset_current_session_key, set_current_session_key
+
+        _set_trust("srv", "untrusted")
+        session_key = f"mcp-real-consent-{bypass}"
+        session_tokens = set_session_vars(platform="webhook", session_key=session_key)
+        key_token = set_current_session_key(session_key)
+        try:
+            if bypass == "session_yolo":
+                approval.enable_session_yolo(session_key)
+            elif bypass == "global_yolo":
+                monkeypatch.setattr(approval, "_YOLO_MODE_FROZEN", True)
+            else:
+                monkeypatch.setattr("tools.approval_context._get_approval_mode", lambda: "off")
+            raw = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)({})
+        finally:
+            if bypass == "session_yolo":
+                approval.disable_session_yolo(session_key)
+            reset_current_session_key(key_token)
+            clear_session_vars(session_tokens)
+
+        fake_session.call_tool.assert_not_awaited()
+        assert "error" in json.loads(raw)
+
     def test_session_yolo_does_not_cross_session_trust_boundary(self, fake_session):
         """A session YOLO bit cannot authorize another session's MCP write."""
         from tools import approval

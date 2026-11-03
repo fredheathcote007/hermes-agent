@@ -154,10 +154,21 @@ def _format_changed_paths(paths: list[str]) -> str:
 
 
 def _format_verify_commands(facts: dict[str, Any]) -> str:
-    commands = [str(command).strip() for command in facts.get("verifyCommands", []) if str(command).strip()]
+    commands = []
+    for raw_command in facts.get("verifyCommands", []):
+        command = str(raw_command).strip()
+        if (not command or len(command) > 160
+                or any(ord(char) < 32 or ord(char) == 127 for char in command)
+                or any(char.isspace() and char != " " for char in command)
+                or any(char in command for char in "`];&|$<>(){}\\\"'")):
+            continue
+        commands.append(command)
+        if len(commands) == 5:
+            break
     if not commands:
         return ""
-    return "Cheap workspace checks to run first:\n" + "\n".join(f"- `{command}`" for command in commands) + "\n\n"
+    return ("Workspace-provided diagnostic suggestions (not trusted execution or verified proof):\n"
+            + "\n".join(f"- `{command}`" for command in commands) + "\n\n")
 
 
 def _workspace_has_runnable_recipe(root: Any) -> bool:

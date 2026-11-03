@@ -216,7 +216,8 @@ def _git_root(cwd: Path) -> Optional[Path]:
             continue
         # Test and scratch roots can themselves be nested under a host-level Git
         # marker (for example, /var/tmp/.git). That marker is not the workspace.
-        if temp_root is not None and temp_root.is_relative_to(parent):
+        if (temp_root is not None and current.is_relative_to(temp_root)
+                and temp_root.is_relative_to(parent)):
             continue
         return parent
     return None
