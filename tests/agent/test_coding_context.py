@@ -94,6 +94,25 @@ class TestCodingSelection:
 # ── git/workspace probe ─────────────────────────────────────────────────────
 
 class TestWorkspaceBlock:
+    def test_git_root_preserved_when_cwd_is_outside_temp_root(self, tmp_path, monkeypatch):
+        project = tmp_path / "project"
+        (project / ".git").mkdir(parents=True)
+        (project / "src").mkdir()
+        temp_root = project / "tmp"
+        temp_root.mkdir()
+        monkeypatch.setattr(cc.tempfile, "gettempdir", lambda: str(temp_root))
+
+        assert cc._git_root(project / "src") == project.resolve()
+
+    def test_host_git_marker_is_skipped_when_cwd_is_in_temp_root(self, tmp_path, monkeypatch):
+        temp_root = tmp_path / "tmp"
+        cwd = temp_root / "project" / "src"
+        cwd.mkdir(parents=True)
+        (temp_root / ".git").mkdir()
+        monkeypatch.setattr(cc.tempfile, "gettempdir", lambda: str(temp_root))
+
+        assert cc._git_root(cwd) is None
+
     def test_empty_outside_repo(self, tmp_path):
         assert cc.build_coding_workspace_block(tmp_path) == ""
 

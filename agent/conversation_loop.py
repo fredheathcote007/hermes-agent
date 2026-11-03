@@ -1621,6 +1621,25 @@ def _codex_app_server_turn(agent: Any, s: Any) -> Optional[dict[str, Any]]:
     return None
 
 
+def _codex_app_server_verification_blocked_result(s: Any) -> dict[str, Any]:
+    """Return the fail-closed result without starting Codex or its subprocess."""
+    return {
+        "final_response": (
+            "Work is incomplete: Codex app-server cannot run while verify-on-stop is enabled "
+            "because no protected independent-verification receipt bridge exists. No Codex turn was started."
+        ),
+        "messages": s.messages,
+        "api_calls": 0,
+        "completed": False,
+        "partial": True,
+        "interrupted": False,
+        "failed": True,
+        "verification_unresolved": True,
+        "turn_exit_reason": "verification_unresolved",
+        "error": "protected verification receipt bridge unavailable",
+    }
+
+
 def _run_conversation_turn(
     agent,
     user_message: Any,
@@ -1714,10 +1733,17 @@ def _run_conversation_turn(
         max_compression_attempts=getattr(agent, "max_compression_attempts", 3),
         **{f.name: getattr(_ctx, f.name.lstrip("_")) for f in fields(_LoopState) if f.name in _CTX_FIELDS},
     )
-    # Opt-in runtime: api_mode == codex_app_server hands the whole turn to the codex
-    # app-server subprocess (see agent/transports/codex_app_server_session.py).
-    if agent.api_mode == "codex_app_server" and (codex_result := _codex_app_server_turn(agent, s)) is not None:
-        return codex_result
+    # Deliberate FHM-005 fail-closed posture: enabled verify-on-stop blocks Codex app-server
+    # code edits entirely until a protected receipt bridge exists. This guard is before session
+    # setup, so no Codex tool/process can start; ordinary non-Codex mode and
+    # docs-only stop-gate behavior remain unchanged.
+    if agent.api_mode == "codex_app_server":
+        from agent.verification_stop import codex_app_server_verification_blocked
+
+        if codex_app_server_verification_blocked():
+            return _codex_app_server_verification_blocked_result(s)
+        if (codex_result := _codex_app_server_turn(agent, s)) is not None:
+            return codex_result
 
     _prelude_action, _prelude_result = play_prelude(agent, s, prelude)
     if _prelude_action == "return":

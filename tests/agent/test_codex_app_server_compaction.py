@@ -92,6 +92,22 @@ class DummyAgent:
         self.events.append((name, payload))
 
 
+def test_verify_on_stop_blocks_cached_codex_compaction_before_native_call(monkeypatch):
+    """A cached Codex thread must not compact before the strict turn gate runs."""
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    agent = DummyAgent(TurnResult(thread_id="thread-1", turn_id="compact-turn-1"))
+    messages = [{"role": "user", "content": "edit project files"}]
+
+    returned, prompt = compress_context(
+        agent, messages, "system", approx_tokens=100000, task_id="test", force=True,
+    )
+
+    assert returned is messages
+    assert prompt == "cached prompt"
+    assert agent._codex_session.calls == 0
+    assert agent.context_compressor.compression_count == 0
+
+
 def test_codex_app_server_native_auto_mode_leaves_thread_compaction_to_codex():
     agent = DummyAgent(
         TurnResult(thread_id="thread-1", turn_id="compact-turn-1")

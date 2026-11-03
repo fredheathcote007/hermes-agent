@@ -81,9 +81,34 @@ def test_untrusted_prompt_names_cost_and_running_total_and_declines_add_nothing(
     assert "Costs 5-20 credits (per item). This chat has used about 40 credits on 'srv' (limit 100)." in asked[0]
     # An undeclared tool on a costed server keeps main's exact prompt.
     _, asked = _call("free_status")
-    assert asked == ["MCP tool 'free_status' on UNTRUSTED server 'srv' wants to run. This tool is write-capable "
-                     "(no readOnlyHint=true annotation) and may modify external state."]
+    assert asked == ["MCP tool 'free_status' on UNTRUSTED server 'srv' wants to run. This untrusted server tool is "
+                     "treated as potentially mutating and may modify external state."]
     assert session.call_tool.await_count == 3
+
+
+def test_generic_yolo_does_not_bypass_mcp_trust_or_spend_limit(session):
+    """The mandatory trust prompt and the independent budget both remain active under YOLO."""
+    from tools import approval
+
+    _register({"trust": "untrusted", "tool_costs": {"paid_render": 40}, "spend_limit": 50})
+    session_key = "mcp-cost-yolo"
+    approval.enable_session_yolo(session_key)
+    token = set_current_session_key(session_key)
+    try:
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent",
+            side_effect=["accept", "decline"],
+        ) as consent:
+            first = json.loads(handlers._make_tool_handler("srv", "paid_render", 30.0)({}))
+            second = json.loads(handlers._make_tool_handler("srv", "paid_render", 30.0)({}))
+    finally:
+        reset_current_session_key(token)
+        approval.disable_session_yolo(session_key)
+
+    assert first == {"result": "ok"}
+    assert "spend limit is 50 credits" in second["error"]
+    assert consent.call_count == 2  # trust approval, then over-limit approval
+    assert session.call_tool.await_count == 1
 
 
 def test_full_trust_asks_only_past_the_limit_and_unattended_refuses_without_dispatch(session):

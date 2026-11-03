@@ -103,13 +103,12 @@ def test_untrusted_server_refuses_destructive_tool_before_the_rpc(untrusted: dic
     assert "error" in rw and untrusted["canary"] not in json.dumps(rw), rw
 
 
-def test_untrusted_server_runs_read_only_tool_without_approval(untrusted: dict[str, Any],
-                                                                request: pytest.FixtureRequest) -> None:
+def test_untrusted_server_does_not_trust_server_declared_read_only_hint(untrusted: dict[str, Any]) -> None:
+    """An untrusted server cannot authorise its own calls using readOnlyHint=True."""
     received = calls_received(untrusted["log"], "ro_probe")
     ro = payload(untrusted["results"][0])
-    with known_gate(KNOWN, request.node.name, raises=KnownSymptom):
-        symptom(received and f"RO:{untrusted['canary']}:r" in json.dumps(ro),
-                f"readOnlyHint=true tool was gated on an untrusted server: server got {received}, model got {ro}")
+    assert not received, "untrusted readOnlyHint=true tool reached the server without operator consent"
+    assert "error" in ro, ro
 
 
 def test_default_trust_server_runs_destructive_tool(tmp_path: Path) -> None:

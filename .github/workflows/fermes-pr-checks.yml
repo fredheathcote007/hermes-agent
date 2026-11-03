@@ -140,3 +140,30 @@ jobs:
           else
             echo "FHM-005 live qualification not present; skipped for this branch"
           fi
+      - name: FHM-011 P0 security regressions
+        run: |
+          .venv/bin/ruff check \
+            agent/codex_runtime.py agent/conversation_compression_codex.py \
+            agent/conversation_loop.py agent/verification_evidence.py \
+            agent/verification_stop.py tools/mcp_tool_handlers.py \
+            tests/agent/test_codex_app_server_compaction.py \
+            tests/agent/test_codex_app_server_integration.py \
+            tests/agent/test_fhm011_canary_verification_compatibility.py \
+            tests/agent/test_fhm011_verification_boundary.py \
+            tests/agent/test_verification_continuation_budget.py \
+            tests/agent/test_verification_stop.py \
+            tests/e2e/core/mcp_plugins/test_mcp_stdio_conformance.py \
+            tests/tools/test_mcp_tool_costs.py \
+            tests/tools/test_mcp_trust_gating.py \
+            tests/verify/test_ledger_and_nudge_integration.py
+          scripts/run_tests.sh \
+            tests/agent/test_codex_app_server_compaction.py \
+            tests/agent/test_codex_app_server_integration.py \
+            tests/agent/test_fhm011_canary_verification_compatibility.py \
+            tests/agent/test_fhm011_verification_boundary.py \
+            tests/agent/test_verification_continuation_budget.py \
+            tests/agent/test_verification_stop.py \
+            tests/e2e/core/mcp_plugins/test_mcp_stdio_conformance.py \
+            tests/tools/test_mcp_tool_costs.py \
+            tests/tools/test_mcp_trust_gating.py \
+            tests/verify/test_ledger_and_nudge_integration.py

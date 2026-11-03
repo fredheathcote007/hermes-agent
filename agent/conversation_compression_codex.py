@@ -66,6 +66,15 @@ def _compress_context_via_codex_app_server(
             route="codex_app_server", method=method, attempt_seed=attempt_seed,
         )
 
+    # Preflight compression can run before conversation_loop's Codex turn guard.
+    # Never invoke a cached Codex thread while independent verification is enabled
+    # but its protected receipt bridge is unavailable.
+    from agent.verification_stop import codex_app_server_verification_blocked
+
+    if codex_app_server_verification_blocked():
+        _record("blocked", "protected_verification_unavailable")
+        return messages, _existing_system_prompt(agent, system_message)
+
     _sid = getattr(agent, "session_id", None) or "none"
     _tokens = f"{approx_tokens:,}" if approx_tokens else "unknown"
     auto_mode = str(getattr(agent, "codex_app_server_auto_compaction", "native") or "native").lower()
