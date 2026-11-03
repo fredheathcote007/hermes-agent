@@ -107,6 +107,10 @@ def _verification_snapshot(
         if not facts:
             continue
         status = verification_status(session_id=session_id, cwd=cwd)
+        # The passive ledger is diagnostic even when it reports ``passed``;
+        # keep that label on the user-facing stop nudge without changing the
+        # legacy ledger/API shape.
+        status = {**status, "provenance": "diagnostic"}
         first_snapshot = first_snapshot or (status, facts)
         if str(status.get("status") or "unverified") != "passed":
             return status, facts
@@ -114,37 +118,17 @@ def _verification_snapshot(
 
 
 def verification_unresolved(*, session_id: str | None, changed_paths: Iterable[str]) -> bool:
-    """Fail closed for code edits unless a current same-session Hermes verifier passed.
+    """Fail closed for code edits until a protected verifier receipt bridge exists.
 
-    Terminal command receipts remain useful diagnostics, but are worker-controlled and
-    cannot serve as independent acceptance evidence. The verifier engine is a separate
-    architecture gate; until then only a recorded full ``hermes verify`` is admissible.
+    The evidence ledger is worker-controlled diagnostic state.  This compatibility
+    lane has no controller-owned, independently authenticated receipt bridge, so a
+    ledger row can never authorize completion.  Keep the ledger available for
+    diagnostics and the nudge, but do not read a passive ``passed`` row as proof.
     """
     paths = sorted({str(p) for p in changed_paths if p and not _is_non_code_path(str(p))})
     if not paths:
         return False
-    try:
-        from agent.coding_context import project_facts_for
-        from agent.verification_evidence import verification_status
-        candidates = _candidate_cwds(paths)
-        if not candidates:
-            return True
-        for cwd in candidates:
-            facts = project_facts_for(cwd)
-            if not facts:
-                return True
-            status = verification_status(session_id=session_id, cwd=cwd)
-            evidence = status.get("evidence") if isinstance(status.get("evidence"), dict) else {}
-            if not (
-                status.get("status") == "passed"
-                and evidence.get("kind") == "verify"
-                and str(evidence.get("session_id") or "") == str(session_id or "default")
-                and evidence.get("scope") == "full"
-            ):
-                return True
-        return False
-    except Exception:  # health: allow BLE001 -- evidence lookup failure is unresolved
-        return True
+    return True
 
 
 def has_verifiable_paths(changed_paths: Iterable[str]) -> bool:
@@ -180,6 +164,8 @@ def _workspace_has_runnable_recipe(root: Any) -> bool:
 
 def _status_detail(status: dict[str, Any]) -> str:
     state = str(status.get("status") or "unverified")
+    if status.get("provenance") == "diagnostic":
+        state = f"diagnostic only ({state})"
     evidence = status.get("evidence") if isinstance(status.get("evidence"), dict) else None
     if not evidence:
         return state
@@ -208,14 +194,6 @@ def build_verify_on_stop_nudge(
     if snapshot is None:
         return None
     status, facts = snapshot
-    evidence = status.get("evidence") if isinstance(status.get("evidence"), dict) else {}
-    if (
-        status.get("status") == "passed"
-        and evidence.get("kind") == "verify"
-        and str(evidence.get("session_id") or "") == str(session_id or "default")
-        and evidence.get("scope") == "full"
-    ):
-        return None
     has_recipe = _workspace_has_runnable_recipe(facts.get("root"))
 
     # Optional shipped coding guidance, only paid when this evidence gate fires.
@@ -229,10 +207,11 @@ def build_verify_on_stop_nudge(
 
     if has_recipe:
         command_instruction = (
-            "Run the independent Hermes verifier with `hermes verify "
-            "--json` (detect -> build -> test -> boot -> readiness poll); a "
-            "passing full run records verification evidence for this workspace. "
-            "Do not substitute worker-reported command output or logs."
+            "Run `hermes verify --json` (detect -> build -> test -> boot -> "
+            "readiness poll) only for diagnostic evidence. This lane has no "
+            "protected controller receipt bridge, so even a passing run cannot "
+            "authorize completion. Do not substitute worker-reported command "
+            "output or logs."
         )
     else:
         command_instruction = (
@@ -243,7 +222,7 @@ def build_verify_on_stop_nudge(
 
     return (
         "[System: You edited code in this turn, but the workspace does not have "
-        "fresh passing verification evidence yet.\n\n"
+        "fresh independently authenticated verification evidence yet.\n\n"
         f"Verification status: {_status_detail(status)}\n\n"
         f"Changed paths:\n{_format_changed_paths(paths)}\n\n"
         f"{command_instruction} If verification is not possible, explain the "

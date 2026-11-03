@@ -3,7 +3,7 @@
 Covers the closed loop the rescoped PR is about:
 
 - ``hermes verify`` records into the evidence ledger (pass and fail),
-- a passing run satisfies the verify-on-stop guard,
+- a passing run remains diagnostic until a protected verifier receipt bridge exists,
 - the verify-on-stop nudge names ``hermes verify --json`` when the workspace
   has a runnable recipe (start command or saved manifest),
 - the CLI's detect path merges ``detect_project_facts`` verify commands the
@@ -140,15 +140,16 @@ def test_cli_verify_clears_stale_on_editing_session(hermes_home, capsys):
 
     assert verification_status(session_id=edit_session, cwd=project)["status"] == "passed"
     assert verification_status(session_id="default", cwd=project)["status"] == "passed"
-    assert build_verify_on_stop_nudge(session_id=edit_session, changed_paths=[changed]) is None
+    # The CLI ledger row remains diagnostic until a protected verifier bridge exists.
+    assert build_verify_on_stop_nudge(session_id=edit_session, changed_paths=[changed]) is not None
 
 
 # ---------------------------------------------------------------------------
-# closed loop: edit -> stop guard nudge -> hermes verify -> guard satisfied
+# diagnostic loop: edit -> stop guard nudge -> hermes verify -> still unresolved
 # ---------------------------------------------------------------------------
 
 
-def test_passing_verify_run_satisfies_stop_guard(hermes_home, capsys):
+def test_passing_verify_run_remains_diagnostic_for_stop_guard(hermes_home, capsys):
     project = _workspace(hermes_home, manifest_recipe={"name": "Fake", "test": ["echo ok"]})
     changed = str(project / "src" / "app.ts")
     mark_workspace_edited(session_id="default", cwd=project, paths=[changed])
@@ -156,7 +157,7 @@ def test_passing_verify_run_satisfies_stop_guard(hermes_home, capsys):
 
     assert run_verify_command(make_args(project)) == 0
 
-    assert build_verify_on_stop_nudge(session_id="default", changed_paths=[changed]) is None
+    assert build_verify_on_stop_nudge(session_id="default", changed_paths=[changed]) is not None
 
 
 # ---------------------------------------------------------------------------

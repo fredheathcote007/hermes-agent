@@ -605,11 +605,12 @@ def _newest_workspace_verify(
 
 
 def verification_status(*, session_id: str | None, cwd: str | Path | None) -> dict[str, Any]:
-    """Return the best known verification state for a session/workspace.
+    """Return passive, diagnostic verification state for a session/workspace.
 
     Evidence recorded before the latest edit is reported as ``stale``. A
     ``hermes verify`` event for the same ``root`` that is at least as new as
-    that edit satisfies the guard even if another session recorded it.
+    that edit is reported for diagnostics even if another session recorded it.
+    It is never an independently authenticated completion receipt.
     """
     if not _ledger_enabled():
         return {"status": "disabled", "evidence": None}
@@ -626,7 +627,10 @@ def verification_status(*, session_id: str | None, cwd: str | Path | None) -> di
             (sid, root),
         ).fetchone()
         if state is None:
-            return {"status": "unverified", "evidence": None, "root": root, "session_id": sid, "changed_paths": []}
+            return {
+                "status": "unverified", "evidence": None,
+                "root": root, "session_id": sid, "changed_paths": [],
+            }
         event = None
         if state["last_event_id"] is not None:
             event = conn.execute("SELECT * FROM verification_events WHERE id = ?", (state["last_event_id"],)).fetchone()

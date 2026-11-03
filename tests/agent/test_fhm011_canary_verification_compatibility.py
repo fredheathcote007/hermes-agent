@@ -1,9 +1,9 @@
 """FHM-011 contract tests for the two upstream canary verifier conflicts.
 
 These tests deliberately exercise the exported phase-one guard and evidence APIs
-through a temporary project.  A terminal receipt may be useful diagnostics, but
-it is not independent attestation; only fresh full ``hermes verify`` evidence
-can clear the approved DEC-004 source guard.
+through a temporary project.  Terminal and ``hermes verify`` ledger rows may be
+useful diagnostics, but none is independent attestation and none can clear the
+approved DEC-004 source guard without the missing protected receipt bridge.
 """
 
 import json
@@ -99,7 +99,7 @@ def test_passed_terminal_receipts_never_clear_independent_stop_gate(
     "case",
     ["missing", "failed", "zero_work", "targeted", "foreign", "session_mismatch"],
 )
-def test_only_fresh_full_verifier_evidence_can_clear_edit(tmp_path, monkeypatch, case):
+def test_passive_verifier_evidence_never_clears_edit(tmp_path, monkeypatch, case):
     """Missing, failed, stale, partial, and unbound proof all remain unresolved."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     root = tmp_path / "project"
@@ -126,7 +126,7 @@ def test_only_fresh_full_verifier_evidence_can_clear_edit(tmp_path, monkeypatch,
     assert "fully verified" in nudge
 
 
-def test_fresh_same_session_full_verify_clears_guard_and_nudge(tmp_path, monkeypatch):
+def test_fresh_same_session_full_verify_is_diagnostic_only(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     root = tmp_path / "project"
     _node_project(root)
@@ -140,9 +140,12 @@ def test_fresh_same_session_full_verify_clears_guard_and_nudge(tmp_path, monkeyp
         verification_status(session_id="owner", cwd=root)["evidence"]["kind"]
         == "verify"
     )
-    assert not verification_unresolved(session_id="owner", changed_paths=[changed])
+    # ``record_verify_run`` is a worker-controlled SQLite diagnostic row.  No
+    # protected controller receipt bridge is present in this compatibility
+    # lane, so it cannot authorize completion.
+    assert verification_unresolved(session_id="owner", changed_paths=[changed])
     assert (
-        build_verify_on_stop_nudge(session_id="owner", changed_paths=[changed]) is None
+        build_verify_on_stop_nudge(session_id="owner", changed_paths=[changed]) is not None
     )
 
 

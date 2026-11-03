@@ -144,11 +144,17 @@ def test_intermediate_ack_uses_summary_instead_of_premature_text(agent, monkeypa
     agent._handle_max_iterations.assert_called_once()
 
 
-def test_later_verified_response_supersedes_pending_report(agent, monkeypatch):
+def test_later_model_claim_does_not_supersede_pending_report(agent, monkeypatch):
     agent.max_iterations = 2
     agent.iteration_budget.max_total = 2
     answers = iter([_response("premature report"), _response("verified final report")])
-    agent._interruptible_api_call = lambda _kwargs: next(answers)
+
+    def model_call(_kwargs):
+        # A real edit is required to engage the finalization verification boundary.
+        agent._turn_file_mutation_paths = {"changed.py"}
+        return next(answers)
+
+    agent._interruptible_api_call = model_call
     agent._handle_max_iterations = MagicMock(return_value="replacement summary")
     monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
 
@@ -161,13 +167,14 @@ def test_later_verified_response_supersedes_pending_report(agent, monkeypatch):
     ):
         result = agent.run_conversation("edit changed.py")
 
-    assert result["final_response"] == "verified final report"
-    assert result["turn_exit_reason"] == "text_response(finish_reason=stop)"
-    assert result["completed"] is True
+    assert result["final_response"].startswith("Work is incomplete: independent verification")
+    assert result["turn_exit_reason"] == "verification_unresolved"
+    assert result["completed"] is False
+    assert result["failed"] is True
     agent._handle_max_iterations.assert_not_called()
 
 
-def test_multiple_verification_retries_publish_each_candidate_once(agent, monkeypatch):
+def test_multiple_verification_retries_publish_candidates_but_fail_closed(agent, monkeypatch):
     """Multiple verification retries should publish each candidate once, in order."""
     agent.max_iterations = 3
     agent.iteration_budget.max_total = 3
@@ -176,7 +183,13 @@ def test_multiple_verification_retries_publish_each_candidate_once(agent, monkey
         _response("candidate two"),
         _response("candidate three"),
     ])
-    agent._interruptible_api_call = lambda _kwargs: next(answers)
+
+    def model_call(_kwargs):
+        # Each candidate follows the same edited-file verification obligation.
+        agent._turn_file_mutation_paths = {"changed.py"}
+        return next(answers)
+
+    agent._interruptible_api_call = model_call
     agent._handle_max_iterations = MagicMock(return_value="replacement summary")
     monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
 
@@ -197,10 +210,11 @@ def test_multiple_verification_retries_publish_each_candidate_once(agent, monkey
 
     # Each candidate was emitted as an interim message, in order.
     assert emitted == ["candidate one", "candidate two"]
-    # The final response is the last candidate.
-    assert result["final_response"] == "candidate three"
-    assert result["turn_exit_reason"] == "text_response(finish_reason=stop)"
-    assert result["completed"] is True
+    # The final candidate cannot authorize completion without a protected receipt.
+    assert result["final_response"].startswith("Work is incomplete: independent verification")
+    assert result["turn_exit_reason"] == "verification_unresolved"
+    assert result["completed"] is False
+    assert result["failed"] is True
     agent._handle_max_iterations.assert_not_called()
 
 

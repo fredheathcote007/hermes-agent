@@ -178,13 +178,13 @@ def test_verifier_evidence_must_be_current_and_session_bound(tmp_path, monkeypat
     assert verification_unresolved(session_id="owner", changed_paths=[changed])
 
 
-def test_current_full_verifier_evidence_allows_completion_after_edit(tmp_path, monkeypatch):
+def test_current_full_verifier_evidence_is_diagnostic_only_after_edit(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     _node_project(tmp_path)
     changed = str(tmp_path / "src" / "app.ts")
     mark_workspace_edited(session_id="owner", cwd=tmp_path, paths=[changed])
     record_verify_run(root=tmp_path, session_id="owner", ok=True, scope="full")
-    assert not verification_unresolved(session_id="owner", changed_paths=[changed])
+    assert verification_unresolved(session_id="owner", changed_paths=[changed])
 
 
 def test_cross_session_full_verify_does_not_clear_editers_pending_work(tmp_path, monkeypatch):
