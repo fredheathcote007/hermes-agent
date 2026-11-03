@@ -207,7 +207,19 @@ def _resolve_cwd(cwd: Optional[str | Path]) -> Path:
 
 def _git_root(cwd: Path) -> Optional[Path]:
     current = cwd.resolve()
-    return next((p for p in (current, *current.parents) if (p / ".git").exists()), None)
+    try:
+        temp_root = Path(tempfile.gettempdir()).resolve()
+    except (OSError, RuntimeError):
+        temp_root = None
+    for parent in (current, *current.parents):
+        if not (parent / ".git").exists():
+            continue
+        # Test and scratch roots can themselves be nested under a host-level Git
+        # marker (for example, /var/tmp/.git). That marker is not the workspace.
+        if temp_root is not None and temp_root.is_relative_to(parent):
+            continue
+        return parent
+    return None
 
 
 def _home() -> Optional[Path]:

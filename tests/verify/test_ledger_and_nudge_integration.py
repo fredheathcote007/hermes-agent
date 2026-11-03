@@ -190,6 +190,22 @@ def test_nudge_mentions_hermes_verify_when_manifest_exists(hermes_home):
     assert "hermes verify --json" in nudge
 
 
+def test_nudge_ignores_git_marker_around_temp_root(hermes_home, monkeypatch):
+    """A host-level Git marker must not hide a marker-rooted temp project."""
+    import tempfile
+
+    temp_root = hermes_home / "temp-root"
+    temp_root.mkdir()
+    (temp_root / ".git").mkdir()
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp_root))
+    project = _workspace(temp_root, scripts={"test": "vitest", "dev": "vite"})
+    changed = str(project / "src" / "app.ts")
+    mark_workspace_edited(session_id="s1", cwd=project, paths=[changed])
+    nudge = build_verify_on_stop_nudge(session_id="s1", changed_paths=[changed])
+    assert nudge is not None
+    assert "hermes verify --json" in nudge
+
+
 def test_nudge_keeps_plain_wording_without_recipe_start(hermes_home):
     # Verify commands but no start script and no manifest: today's wording.
     project = _workspace(hermes_home, scripts={"test": "vitest"})

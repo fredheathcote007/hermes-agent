@@ -153,6 +153,13 @@ def _format_changed_paths(paths: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _format_verify_commands(facts: dict[str, Any]) -> str:
+    commands = [str(command).strip() for command in facts.get("verifyCommands", []) if str(command).strip()]
+    if not commands:
+        return ""
+    return "Cheap workspace checks to run first:\n" + "\n".join(f"- `{command}`" for command in commands) + "\n\n"
+
+
 def _workspace_has_runnable_recipe(root: Any) -> bool:
     """Whether ``hermes verify`` has a runtime recipe here: a saved
     ``.hermes/environment.json`` or a statically detected recipe with a start
@@ -205,6 +212,7 @@ def build_verify_on_stop_nudge(
         return None
     status, facts = snapshot
     has_recipe = _workspace_has_runnable_recipe(facts.get("root"))
+    cheap_commands = _format_verify_commands(facts)
 
     # Optional shipped coding guidance, only paid when this evidence gate fires.
     try:
@@ -235,7 +243,7 @@ def build_verify_on_stop_nudge(
         "fresh independently authenticated verification evidence yet.\n\n"
         f"Verification status: {_status_detail(status)}\n\n"
         f"Changed paths:\n{_format_changed_paths(paths)}\n\n"
-        f"{command_instruction} If verification is not possible, explain the "
+        f"{cheap_commands}{command_instruction} If verification is not possible, explain the "
         "concrete blocker instead of claiming the work is fully verified."
         f"{addendum}]"
     )
