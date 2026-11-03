@@ -66,7 +66,6 @@ def _tool_is_read_only(server_name: str, tool_name: str) -> bool:
 
 
 _TRUST_GATE_ARGUMENTS_MAX_CHARS = 1_200
-_TRUST_GATE_ARGUMENTS_TRUNCATION_MARKER = "\n... [arguments truncated]"
 _TRUST_GATE_ARGUMENTS_MAX_NODES = 256
 _TRUST_GATE_ARGUMENTS_MAX_DEPTH = 32
 _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS = 64_000
@@ -105,11 +104,23 @@ def _is_secret_argument_name(key: Any) -> bool:
         return False
     folded = key.casefold()
     compact = "".join(char for char in folded if char.isalnum())
+    is_auth_header = (
+        compact.endswith("authorization")
+        or (folded.startswith("x-") and "auth" in compact)
+    )
+    # Cookie headers and cookie-shaped fields carry opaque session material even when the
+    # value does not resemble a credential to the text redactor. Keep descriptive cookie
+    # metadata visible, but mask fields that can hold the actual cookie value.
+    is_cookie_field = compact.endswith(
+        ("cookie", "cookies", "setcookie", "cookieheader", "cookievalue", "cookiejar")
+    )
     return (
         is_secret_field_name(key)
         or folded in SECRET_HEADER_NAME_LIST
         or compact in {"auth", "authorization", "bearer", "token", "secret", "password", "credential"}
-        or compact.endswith(("auth", "apikey", "token", "secret", "password", "credential"))
+        or is_auth_header
+        or is_cookie_field
+        or compact.endswith(("apikey", "token", "secret", "password", "credential"))
     )
 
 
@@ -120,7 +131,7 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
     budget = _budget or _TrustGatePreviewBudget()
     budget.visit(value, _depth)
     if isinstance(value, str):
-        # This is deliberately before control escaping and all preview truncation. The central
+        # This is deliberately before control escaping and the preview size check. The central
         # redactor can therefore see token characters separated by controls or other formatting.
         redacted = redact_sensitive_text(value, force=True)
         if not isinstance(redacted, str):
@@ -206,8 +217,10 @@ def _format_trust_gate_arguments(args: Any) -> Optional[str]:
             return None
         rendered = _escape_trust_gate_controls(rendered)
         if len(rendered) > _TRUST_GATE_ARGUMENTS_MAX_CHARS:
-            keep = _TRUST_GATE_ARGUMENTS_MAX_CHARS - len(_TRUST_GATE_ARGUMENTS_TRUNCATION_MARKER)
-            rendered = rendered[:keep].rstrip() + _TRUST_GATE_ARGUMENTS_TRUNCATION_MARKER
+            # A partial card is not an authoritative representation of the call: a hidden
+            # later argument could be the mutating target. Refuse before consent instead of
+            # inviting approval for a preview that omits arguments.
+            return None
         return rendered
     except Exception:
         # Argument reprs are untrusted input. Never expose an exception or fall back to raw args;
@@ -263,7 +276,8 @@ def _ask_for_call(server_name: str, tool_name: str, charge, booked: Optional[lis
         argument_preview = _format_trust_gate_arguments(args)
         if argument_preview is None:
             return tool_error(f"MCP tool '{tool_name}' on untrusted server '{server_name}' was blocked: its "
-                              "arguments could not be rendered safely for approval.")
+                              "arguments could not be rendered safely within the approval preview. "
+                              "Reduce the payload and try again.")
         head = f"MCP tool '{tool_name}' on UNTRUSTED server '{server_name}' wants to run."
         tail = "This untrusted server tool is treated as potentially mutating and may modify external state."
         # The limit notice leads: the messaging gateway's text fallback keeps only the first ~200 characters.

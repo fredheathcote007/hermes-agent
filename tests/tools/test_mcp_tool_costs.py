@@ -112,6 +112,25 @@ def test_generic_yolo_does_not_bypass_mcp_trust_or_spend_limit(session):
     assert session.call_tool.await_count == 1
 
 
+def test_oversized_untrusted_costed_call_does_not_prompt_or_book(session):
+    """Preview refusal happens before consent and leaves the cost tally unchanged."""
+    _register({"trust": "untrusted", "tool_costs": {"paid_render": 40}, "spend_limit": 100})
+    token = set_current_session_key("oversized-costed-call")
+    args = {"prefix": "x" * 5_000, "late_mutating_field": "delete-prod"}
+    try:
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent", return_value="accept"
+        ) as consent:
+            result = json.loads(handlers._make_tool_handler("srv", "paid_render", 30.0)(args))
+    finally:
+        reset_current_session_key(token)
+
+    consent.assert_not_called()
+    assert "Reduce the payload" in result["error"]
+    session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+
+
 def test_full_trust_asks_only_past_the_limit_and_unattended_refuses_without_dispatch(session):
     from gateway.session_context import clear_session_vars, set_session_vars
     _register(COSTED)

@@ -285,23 +285,138 @@ class TestTrustGateAtCallTime:
         ) as consent:
             raw = handler(args)
 
+        # The complete redacted arguments exceed the approval-card budget. A partial card
+        # must never be shown as authoritative, so the call is refused before consent.
+        consent.assert_not_called()
+        fake_session.call_tool.assert_not_awaited()
+        parsed = json.loads(raw)
+        assert "error" in parsed
+        assert "Reduce the payload" in parsed["error"]
+
+    @pytest.mark.parametrize("author_key", ["AUTHOR", "Author"])
+    def test_author_metadata_remains_visible_in_plain_and_header_arguments(
+        self, fake_session, author_key
+    ):
+        """The auth suffix rule must not classify normal author metadata as a secret."""
+        _set_trust("srv", "untrusted")
+        args = {
+            author_key: "Alice",
+            "header": {"name": author_key, "value": "Alice"},
+            "nested": [{author_key: "Bob"}],
+        }
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
         message = consent.call_args.args[0]
-        assert '"job": "release"' in message
+        assert f'"{author_key}": "Alice"' in message
+        assert f'"name": "{author_key}"' in message
+        assert '"value": "Alice"' in message
+        assert f'"{author_key}": "Bob"' in message
+        fake_session.call_tool.assert_not_awaited()
+
+    def test_authorization_and_cookie_header_shapes_are_masked(self, fake_session):
+        """Nested header maps and name/value pairs mask opaque auth and cookie values."""
+        _set_trust("srv", "untrusted")
+        args = {
+            "headers": {
+                "Proxy-Authorization": "Basic proxy-opaque-secret",
+                "X-Authorization": "Bearer x-opaque-secret",
+                "Cookie": "session=cookie-opaque-secret",
+                "Set-Cookie": "sid=set-cookie-opaque-secret; HttpOnly",
+                "X-Custom-Auth": "custom-opaque-secret",
+                "X-Request-Id": "request-visible",
+            },
+            "header_list": [
+                {"name": "Proxy-Authorization", "value": "Basic pair-proxy-secret"},
+                {"name": "X-Authorization", "value": "Bearer pair-x-secret"},
+                {"name": "Cookie", "value": "pair-cookie-secret"},
+                {"name": "Set-Cookie", "value": "pair-set-cookie-secret"},
+                {"name": "X-Request-Id", "value": "pair-visible"},
+            ],
+            "cookie_metadata": {
+                "name": "session",
+                "domain": "example.test",
+                "cookie_value": "cookie-value-secret",
+            },
+        }
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+        message = consent.call_args.args[0]
         for secret in (
-            "sk-supersecretcredential123456",
-            "opaque-authorization-value",
-            "opaque-header-value",
-            "opaque-credential-value",
+            "proxy-opaque-secret",
+            "x-opaque-secret",
+            "cookie-opaque-secret",
+            "set-cookie-opaque-secret",
+            "custom-opaque-secret",
+            "pair-proxy-secret",
+            "pair-x-secret",
+            "pair-cookie-secret",
+            "pair-set-cookie-secret",
+            "cookie-value-secret",
         ):
             assert secret not in message
-        assert "truncated" in message
-        assert len(message) < 2_000
-        assert "\x1b" not in message
-        assert "\u202e" not in message
-        assert "\\u001b" in message
-        assert "\\u202e" in message
+        assert '"X-Request-Id": "request-visible"' in message
+        assert '"value": "pair-visible"' in message
+        assert '"domain": "example.test"' in message
         fake_session.call_tool.assert_not_awaited()
-        assert "error" in json.loads(raw)
+
+    def test_oversized_preview_denies_before_consent_and_rpc(self, fake_session):
+        """A hidden mutating argument cannot be approved behind a large benign prefix."""
+        _set_trust("srv", "untrusted")
+        args = {"notes": "x" * 4_500, "destructive_target": "/production/database"}
+        handler = _mcp_handlers._make_tool_handler("srv", "mutate", 30.0)
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+            raw = handler(args)
+
+        consent.assert_not_called()
+        fake_session.call_tool.assert_not_awaited()
+        parsed = json.loads(raw)
+        assert "error" in parsed
+        assert "Reduce the payload" in parsed["error"]
+
+    def test_preview_cap_allows_exact_boundary_and_rejects_one_char_over(self, fake_session):
+        """The complete preview is approvable at 1200 chars, but not at 1201."""
+        _set_trust("srv", "untrusted")
+        prefix = "x"
+
+        def args_for(prefix_length):
+            return {"prefix": "x" * prefix_length, "late_mutating_field": "delete-prod"}
+
+        def rendered_length(args):
+            return len(json.dumps(args, ensure_ascii=False, indent=2))
+
+        while rendered_length(args_for(len(prefix))) < 1_200:
+            prefix += "x"
+        assert rendered_length(args_for(len(prefix))) == 1_200
+        under_limit = args_for(len(prefix))
+        over_limit = {
+            "prefix": under_limit["prefix"] + "x",
+            "late_mutating_field": under_limit["late_mutating_field"],
+        }
+        assert rendered_length(over_limit) == 1_201
+
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent", return_value="accept"
+        ) as consent:
+            accepted = _mcp_handlers._make_tool_handler("srv", "mutate", 30.0)(under_limit)
+
+        consent.assert_called_once()
+        message = consent.call_args.args[0]
+        assert '"late_mutating_field": "delete-prod"' in message
+        assert json.loads(accepted) == {"result": "ok"}
+        fake_session.call_tool.assert_awaited_once()
+
+        fake_session.call_tool.reset_mock()
+        consent.reset_mock()
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent", return_value="accept"
+        ) as consent:
+            refused = _mcp_handlers._make_tool_handler("srv", "mutate", 30.0)(over_limit)
+
+        consent.assert_not_called()
+        fake_session.call_tool.assert_not_awaited()
+        assert "Reduce the payload" in json.loads(refused)["error"]
 
     def test_unrenderable_arguments_fail_closed_before_consent_or_transport(self, fake_session):
         """A preview failure cannot turn an untrusted call into an unreviewed dispatch."""
@@ -333,8 +448,8 @@ class TestTrustGateAtCallTime:
         assert '"value": "***"' in message
         fake_session.call_tool.assert_not_awaited()
 
-    def test_redaction_sees_token_before_preview_cutoff(self, fake_session, monkeypatch):
-        """A token at the raw preview boundary is redacted before any representation is sliced."""
+    def test_redaction_sees_token_before_preview_size_check(self, fake_session, monkeypatch):
+        """A token in an oversized preview is redacted before the call is refused."""
         import agent.redact
 
         seen = []
@@ -349,10 +464,11 @@ class TestTrustGateAtCallTime:
         token = "sk-boundary-secret-1234567890"
         args = {"padding": "x" * 4_790, "payload": "prefix-" + token}
         with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
-            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+            raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
 
         assert any(token in value for value in seen)
-        assert token not in consent.call_args.args[0]
+        consent.assert_not_called()
+        assert token not in raw
         fake_session.call_tool.assert_not_awaited()
 
     def test_control_separated_secret_is_redacted_before_json_escaping(self, fake_session, monkeypatch):
