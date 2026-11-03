@@ -257,6 +257,125 @@ class TestTrustGateAtCallTime:
         assert json.loads(raw) == {"result": "ok"}
         fake_session.call_tool.assert_awaited_once()
 
+    def test_approval_card_shows_bounded_force_redacted_arguments(self, fake_session, monkeypatch):
+        """The operator sees useful arguments without secrets or invisible controls."""
+        import agent.redact
+
+        monkeypatch.setattr(agent.redact, "_REDACT_ENABLED", False)
+        _set_trust("srv", "untrusted")
+        handler = _mcp_handlers._make_tool_handler("srv", "trigger_build", 30.0)
+        args = {
+            "job": "release",
+            "api_key": "sk-supersecretcredential123456",
+            "nested": {
+                "headers": {
+                    "Authorization": "Bearer opaque-authorization-value",
+                    "x-api-key": "opaque-header-value",
+                },
+                "credentials": ["opaque-credential-value"],
+            },
+            "target": "prod\u202e",
+            "command": "printf '$(touch /srv/scratch/pwned)'\x1b[31m",
+            "notes": "x" * 5_000,
+        }
+
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent",
+            return_value="decline",
+        ) as consent:
+            raw = handler(args)
+
+        message = consent.call_args.args[0]
+        assert '"job": "release"' in message
+        for secret in (
+            "sk-supersecretcredential123456",
+            "opaque-authorization-value",
+            "opaque-header-value",
+            "opaque-credential-value",
+        ):
+            assert secret not in message
+        assert "truncated" in message
+        assert len(message) < 2_000
+        assert "\x1b" not in message
+        assert "\u202e" not in message
+        assert "\\u001b" in message
+        assert "\\u202e" in message
+        fake_session.call_tool.assert_not_awaited()
+        assert "error" in json.loads(raw)
+
+    def test_unrenderable_arguments_fail_closed_before_consent_or_transport(self, fake_session):
+        """A preview failure cannot turn an untrusted call into an unreviewed dispatch."""
+        _set_trust("srv", "untrusted")
+        handler = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)
+        with patch("tools.approval_prompt.request_elicitation_consent") as consent:
+            raw = handler({"payload": object()})
+
+        consent.assert_not_called()
+        fake_session.call_tool.assert_not_awaited()
+        assert "error" in json.loads(raw)
+        assert "object at" not in raw
+
+    def test_custom_auth_header_shapes_are_masked(self, fake_session):
+        """Opaque custom auth names and MCP header name/value objects never enter the card."""
+        _set_trust("srv", "untrusted")
+        args = {
+            "auth": "opaque-auth-secret",
+            "headers": {"X-Custom-Auth": "opaque-header-secret"},
+            "header": {"name": "X-Custom-Auth", "value": "opaque-object-secret"},
+        }
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+        message = consent.call_args.args[0]
+        for secret in ("opaque-auth-secret", "opaque-header-secret", "opaque-object-secret"):
+            assert secret not in message
+        assert '"X-Custom-Auth": "***"' in message
+        assert '"value": "***"' in message
+        fake_session.call_tool.assert_not_awaited()
+
+    def test_redaction_sees_token_before_preview_cutoff(self, fake_session, monkeypatch):
+        """A token at the raw preview boundary is redacted before any representation is sliced."""
+        import agent.redact
+
+        seen = []
+        real_redactor = agent.redact.redact_sensitive_text
+
+        def record_redaction(value, **kwargs):
+            seen.append(value)
+            return real_redactor(value, **kwargs)
+
+        monkeypatch.setattr(agent.redact, "redact_sensitive_text", record_redaction)
+        _set_trust("srv", "untrusted")
+        token = "sk-boundary-secret-1234567890"
+        args = {"padding": "x" * 4_790, "payload": "prefix-" + token}
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+        assert any(token in value for value in seen)
+        assert token not in consent.call_args.args[0]
+        fake_session.call_tool.assert_not_awaited()
+
+    def test_control_separated_secret_is_redacted_before_json_escaping(self, fake_session, monkeypatch):
+        """JSON's control escapes cannot hide a secret from the central force redactor."""
+        import agent.redact
+
+        seen = []
+        real_redactor = agent.redact.redact_sensitive_text
+
+        def record_redaction(value, **kwargs):
+            seen.append(value)
+            return real_redactor(value, **kwargs)
+
+        monkeypatch.setattr(agent.redact, "redact_sensitive_text", record_redaction)
+        _set_trust("srv", "untrusted")
+        secret = "sk-control-separated-secret-123456"
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)({"payload": secret[:8] + "\x1b" + secret[8:]})
+
+        assert any("\x1b" in value for value in seen)
+        assert "control-separated-secret" not in consent.call_args.args[0]
+        fake_session.call_tool.assert_not_awaited()
+
     def test_authorized_untrusted_hint_call_is_not_replayed_when_outcome_is_uncertain(
         self, fake_session
     ):

@@ -6,6 +6,7 @@ import asyncio
 import contextvars
 import inspect
 import json
+import math
 import time
 from contextlib import asynccontextmanager
 from functools import partial
@@ -64,7 +65,158 @@ def _tool_is_read_only(server_name: str, tool_name: str) -> bool:
     return _core._tool_read_only_hints.get(_resolve_server_key(server_name), {}).get(tool_name) is True
 
 
-def _trust_gate_check(server_name: str, tool_name: str, booked: Optional[list] = None) -> Optional[str]:
+_TRUST_GATE_ARGUMENTS_MAX_CHARS = 1_200
+_TRUST_GATE_ARGUMENTS_TRUNCATION_MARKER = "\n... [arguments truncated]"
+_TRUST_GATE_ARGUMENTS_MAX_NODES = 256
+_TRUST_GATE_ARGUMENTS_MAX_DEPTH = 32
+_TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS = 64_000
+_TRUST_GATE_ARGUMENTS_SERIALIZATION_BUDGET = 4 * _TRUST_GATE_ARGUMENTS_MAX_CHARS + 512
+
+
+class _TrustGatePreviewBudget:
+    """Bound the untrusted object walk before it reaches JSON serialization."""
+
+    def __init__(self):
+        self.nodes = 0
+        self.estimated_chars = 0
+        self.active_ids = set()
+
+    def visit(self, value: Any, depth: int) -> None:
+        if depth > _TRUST_GATE_ARGUMENTS_MAX_DEPTH:
+            raise ValueError("preview nesting limit")
+        self.nodes += 1
+        if self.nodes > _TRUST_GATE_ARGUMENTS_MAX_NODES:
+            raise ValueError("preview node limit")
+        if isinstance(value, str) and len(value) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+            raise ValueError("preview scalar limit")
+
+    def account(self, chars: int) -> bool:
+        self.estimated_chars += chars
+        if self.estimated_chars > _TRUST_GATE_ARGUMENTS_SERIALIZATION_BUDGET:
+            return False
+        return True
+
+
+def _is_secret_argument_name(key: Any) -> bool:
+    """Whether a structured argument key names a credential or secret header."""
+    from agent.redact import SECRET_HEADER_NAME_LIST, is_secret_field_name
+
+    if not isinstance(key, str):
+        return False
+    folded = key.casefold()
+    compact = "".join(char for char in folded if char.isalnum())
+    return (
+        is_secret_field_name(key)
+        or folded in SECRET_HEADER_NAME_LIST
+        or compact in {"auth", "authorization", "bearer", "token", "secret", "password", "credential"}
+        or compact.endswith(("auth", "apikey", "token", "secret", "password", "credential"))
+    )
+
+
+def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -> Any:
+    """Redact structured values recursively, with bounded traversal and no object reprs."""
+    from agent.redact import redact_sensitive_text
+
+    budget = _budget or _TrustGatePreviewBudget()
+    budget.visit(value, _depth)
+    if isinstance(value, str):
+        # This is deliberately before control escaping and all preview truncation. The central
+        # redactor can therefore see token characters separated by controls or other formatting.
+        redacted = redact_sensitive_text(value, force=True)
+        if not isinstance(redacted, str):
+            raise ValueError("preview redaction failed")
+        if not budget.account(len(redacted)):
+            raise ValueError("preview serialization budget")
+        return redacted
+    if value is None or isinstance(value, (bool, int)):
+        if not budget.account(8):
+            raise ValueError("preview serialization budget")
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("non-finite preview value")
+        if not budget.account(16):
+            raise ValueError("preview serialization budget")
+        return value
+    if isinstance(value, dict):
+        identity = id(value)
+        if identity in budget.active_ids:
+            raise ValueError("cyclic preview value")
+        budget.active_ids.add(identity)
+        try:
+            header_name = value.get("name") if isinstance(value.get("name"), str) else None
+            result = {}
+            for key, item in value.items():
+                if not isinstance(key, str) or len(key) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+                    raise ValueError("invalid preview key")
+                secret_field = _is_secret_argument_name(key)
+                # MCP transports commonly represent headers as {name: ..., value: ...}; the
+                # header name is attacker-controlled, so classify the value from that name too.
+                header_value = key.casefold() == "value" and _is_secret_argument_name(header_name)
+                if secret_field and item not in (None, "") or header_value and item not in (None, ""):
+                    result[key] = "***"
+                else:
+                    result[key] = _mask_secret_argument_fields(item, _budget=budget, _depth=_depth + 1)
+                if not budget.account(len(key) + 4):
+                    raise ValueError("preview serialization budget")
+            return result
+        finally:
+            budget.active_ids.remove(identity)
+    if isinstance(value, (list, tuple)):
+        identity = id(value)
+        if identity in budget.active_ids:
+            raise ValueError("cyclic preview value")
+        budget.active_ids.add(identity)
+        try:
+            result = []
+            for item in value:
+                result.append(_mask_secret_argument_fields(item, _budget=budget, _depth=_depth + 1))
+                if not budget.account(2):
+                    raise ValueError("preview serialization budget")
+            return result
+        finally:
+            budget.active_ids.remove(identity)
+    raise ValueError("unsupported preview value")
+
+
+def _escape_trust_gate_controls(text: str) -> str:
+    """Make invisible/control argument data unambiguous in an operator-facing card."""
+    import unicodedata
+
+    return "".join(
+        f"\\u{ord(char):04x}"
+        if char != "\n" and unicodedata.category(char) in ("Cc", "Cf")
+        else char
+        for char in text
+    )
+
+
+def _format_trust_gate_arguments(args: Any) -> Optional[str]:
+    """Return a force-redacted, bounded JSON preview, or ``None`` if it is unsafe to render."""
+    from agent.redact import redact_sensitive_text
+
+    try:
+        sanitized = _mask_secret_argument_fields(args)
+        rendered = json.dumps(sanitized, ensure_ascii=False, indent=2, allow_nan=False)
+        rendered = _escape_trust_gate_controls(rendered)
+        # Defense in depth for any serializer expansion; the source was already redacted and
+        # structured-budgeted above, so this never slices raw argument data.
+        rendered = redact_sensitive_text(rendered, force=True)
+        if not isinstance(rendered, str):
+            return None
+        rendered = _escape_trust_gate_controls(rendered)
+        if len(rendered) > _TRUST_GATE_ARGUMENTS_MAX_CHARS:
+            keep = _TRUST_GATE_ARGUMENTS_MAX_CHARS - len(_TRUST_GATE_ARGUMENTS_TRUNCATION_MARKER)
+            rendered = rendered[:keep].rstrip() + _TRUST_GATE_ARGUMENTS_TRUNCATION_MARKER
+        return rendered
+    except Exception:
+        # Argument reprs are untrusted input. Never expose an exception or fall back to raw args;
+        # the caller turns this into a fail-closed trust-gate denial.
+        return None
+
+
+def _trust_gate_check(server_name: str, tool_name: str, booked: Optional[list] = None,
+                      args: Any = None) -> Optional[str]:
     """Approval gate for write-capable tools on ``trust: untrusted`` servers, plus the declared spend
     limit on any server. None to proceed, else a ``tool_error``. Fail-closed: approval-system errors
     block. An admitted costed call is charged to the chat's tally and appended to *booked* so the
@@ -82,17 +234,17 @@ def _trust_gate_check(server_name: str, tool_name: str, booked: Optional[list] =
         from tools.approval_context import get_current_session_key
         charge = _costs.pending_charge(key, server_name, tool_name, get_current_session_key())
     if charge is None:
-        return _ask_for_call(server_name, tool_name, None, booked) if gated else None
+        return _ask_for_call(server_name, tool_name, None, booked, args=args) if gated else None
     if not gated and charge.reserve_within_limit()[0]:
         if booked is not None:
             booked.append(charge)
         return None
     with charge.asking():  # re-read under the slot: a call that asked first may have booked meanwhile
-        return _ask_for_call(server_name, tool_name, charge, booked, gated=gated)
+        return _ask_for_call(server_name, tool_name, charge, booked, gated=gated, args=args)
 
 
 def _ask_for_call(server_name: str, tool_name: str, charge, booked: Optional[list], *,
-                  gated: bool = True) -> Optional[str]:
+                  gated: bool = True, args: Any = None) -> Optional[str]:
     """Ask the user about one gated and/or costed call; book the charge only on an explicit yes."""
     spent, over = 0.0, False
     if charge is not None:
@@ -108,10 +260,15 @@ def _ask_for_call(server_name: str, tool_name: str, charge, booked: Optional[lis
             over = True
     extra = charge.lines(spent) if charge is not None else []
     if gated:
+        argument_preview = _format_trust_gate_arguments(args)
+        if argument_preview is None:
+            return tool_error(f"MCP tool '{tool_name}' on untrusted server '{server_name}' was blocked: its "
+                              "arguments could not be rendered safely for approval.")
         head = f"MCP tool '{tool_name}' on UNTRUSTED server '{server_name}' wants to run."
         tail = "This untrusted server tool is treated as potentially mutating and may modify external state."
         # The limit notice leads: the messaging gateway's text fallback keeps only the first ~200 characters.
         message = " ".join([head, *(["This call goes past the chat's spend limit."] if over else []), *extra, tail])
+        message += f"\n\nArguments:\n{argument_preview}"
         description = (f"Server '{server_name}' is configured 'trust: untrusted'. "
                        f"Approve to run '{tool_name}' once, or deny to block it.")
         title = f"MCP server '{server_name}' is asking"
@@ -635,7 +792,7 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float, *,
     def _handler(args: dict, **kwargs) -> Any:
         # Security boundary: untrusted-server write tools need approval before ANY transport work (incl. lazy spawn).
         booked: list = []  # a costed call's charge; refunded when the call never reaches the server
-        error = _trust_gate_check(server_name, tool_name, booked)
+        error = _trust_gate_check(server_name, tool_name, booked, args)
         if error is not None:
             return error
         server, error = None, _check_circuit_breaker(server_name)

@@ -81,8 +81,9 @@ def test_untrusted_prompt_names_cost_and_running_total_and_declines_add_nothing(
     assert "Costs 5-20 credits (per item). This chat has used about 40 credits on 'srv' (limit 100)." in asked[0]
     # An undeclared tool on a costed server keeps main's exact prompt.
     _, asked = _call("free_status")
-    assert asked == ["MCP tool 'free_status' on UNTRUSTED server 'srv' wants to run. This untrusted server tool is "
-                     "treated as potentially mutating and may modify external state."]
+    assert asked[0].startswith("MCP tool 'free_status' on UNTRUSTED server 'srv' wants to run. ")
+    assert "This untrusted server tool is treated as potentially mutating and may modify external state." in asked[0]
+    assert "Arguments:\n{}" in asked[0]
     assert session.call_tool.await_count == 3
 
 
