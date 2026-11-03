@@ -90,6 +90,132 @@ def _set_read_only(server: str, tool: str, value: bool):
 class TestTrustGateAtCallTime:
     """The handler preamble consults the approval path when required."""
 
+    @pytest.mark.parametrize("bypass", ["session_yolo", "global_yolo", "mode_off"])
+    def test_generic_approval_bypass_never_grants_mcp_trust(
+        self, fake_session, monkeypatch, bypass
+    ):
+        """The MCP trust/effect gate remains mandatory under every generic bypass.
+
+        Regression for upstream #143787: the generic command-approval bypass is
+        user-consent policy, not operator trust for a mutating MCP server.
+        """
+        from tools import approval
+        from tools.approval_context import reset_current_session_key, set_current_session_key
+
+        _set_trust("srv", "untrusted")
+        session_key = f"mcp-bypass-{bypass}"
+        key_token = set_current_session_key(session_key)
+        try:
+            if bypass == "session_yolo":
+                approval.enable_session_yolo(session_key)
+            elif bypass == "global_yolo":
+                monkeypatch.setattr(approval, "_YOLO_MODE_FROZEN", True)
+            else:
+                monkeypatch.setattr(
+                    "tools.approval_context._get_approval_mode", lambda: "off"
+                )
+            assert approval.is_approval_bypass_active()
+
+            handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
+            with patch(
+                "tools.approval_prompt.request_elicitation_consent",
+                return_value="decline",
+            ) as consent:
+                raw = handler({"repo": "x"})
+        finally:
+            if bypass == "session_yolo":
+                approval.disable_session_yolo(session_key)
+            reset_current_session_key(key_token)
+
+        consent.assert_called_once()
+        fake_session.call_tool.assert_not_awaited()
+        assert "error" in json.loads(raw)
+
+    def test_session_yolo_does_not_cross_session_trust_boundary(self, fake_session):
+        """A session YOLO bit cannot authorize another session's MCP write."""
+        from tools import approval
+        from tools.approval_context import reset_current_session_key, set_current_session_key
+
+        _set_trust("srv", "untrusted")
+        approval.enable_session_yolo("mcp-authorized-session")
+        asked = []
+
+        def decline(*_args, **_kwargs):
+            asked.append(True)
+            return "decline"
+
+        try:
+            with patch(
+                "tools.approval_prompt.request_elicitation_consent", side_effect=decline
+            ):
+                for session_key in ("mcp-authorized-session", "mcp-other-session"):
+                    key_token = set_current_session_key(session_key)
+                    try:
+                        _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)({})
+                    finally:
+                        reset_current_session_key(key_token)
+        finally:
+            approval.disable_session_yolo("mcp-authorized-session")
+
+        assert len(asked) == 2
+        fake_session.call_tool.assert_not_awaited()
+
+    @pytest.mark.parametrize("hint", [1, "true", object()])
+    def test_malformed_read_only_hint_is_write_capable(self, fake_session, hint):
+        """Only the literal boolean True can relax the untrusted-server gate."""
+        _set_trust("srv", "untrusted")
+        _set_read_only("srv", "delete_repo", hint)
+        handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent",
+            return_value="decline",
+        ) as consent:
+            raw = handler({"repo": "x"})
+
+        consent.assert_called_once()
+        fake_session.call_tool.assert_not_awaited()
+        assert "error" in json.loads(raw)
+
+    def test_denial_blocks_before_lazy_transport_or_rpc(self, fake_session):
+        """A denied untrusted write cannot reach lazy connection or RPC code."""
+        _set_trust("srv", "untrusted")
+        handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent", return_value="decline"
+        ), patch.object(
+            _mcp_handlers, "_check_circuit_breaker", side_effect=AssertionError("trust gate was bypassed")
+        ), patch.object(
+            _mcp_handlers, "_acquire_call_server", side_effect=AssertionError("lazy transport was reached")
+        ):
+            raw = handler({"repo": "x"})
+
+        fake_session.call_tool.assert_not_awaited()
+        assert "error" in json.loads(raw)
+
+    def test_cron_cannot_use_yolo_to_run_untrusted_write(self, fake_session):
+        """Unattended cron remains fail-closed even when its session has YOLO state."""
+        from gateway.session_context import clear_session_vars, set_session_vars
+        from tools import approval
+        from tools.approval_context import reset_current_session_key, set_current_session_key
+
+        _set_trust("srv", "untrusted")
+        session_key = "cron:mcp-trust"
+        approval.enable_session_yolo(session_key)
+        session_tokens = set_session_vars(cron_session="1")
+        key_token = set_current_session_key(session_key)
+        try:
+            with patch.object(
+                _mcp_handlers, "_acquire_call_server", side_effect=AssertionError("cron trust bypassed")
+            ):
+                raw = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)({})
+        finally:
+            reset_current_session_key(key_token)
+            clear_session_vars(session_tokens)
+            approval.disable_session_yolo(session_key)
+
+        fake_session.call_tool.assert_not_awaited()
+        assert "error" in json.loads(raw)
+
     def test_write_capable_on_untrusted_server_requires_approval(
         self, fake_session
     ):
