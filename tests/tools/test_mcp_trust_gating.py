@@ -1,19 +1,14 @@
-"""Tests for MCP tool trust-tier gating via readOnlyHint annotations.
+"""Tests for MCP tool trust-tier gating and transport replay safety.
 
-Security boundary under test: write-capable MCP tools (anything whose
-``readOnlyHint`` annotation is not exactly ``True``) on servers configured
+Security boundary under test: native MCP tools on servers configured
 ``trust: untrusted`` must route through the existing dangerous-approval
-path before the RPC fires. Read-only tools and tools on trusted servers
-pass straight through.
+path before the RPC fires. Full-trust tools retain their existing behavior;
+an untrusted server's annotation cannot relax that gate.
 
 Adversarial notes encoded in these tests:
-- ``readOnlyHint`` is a HINT supplied by the (potentially hostile) server.
-  It can only ever RELAX gating on a server the operator already marked
-  untrusted; the trust tier itself is operator-side config, so a lying
-  server can at worst skip approval for a tool it claims is read-only —
-  which is why the trust key is per-server and gating is fail-closed for
-  missing/unknown metadata.
-- Missing annotations ⇒ write-capable (fail closed).
+- ``readOnlyHint`` is a HINT supplied by the (potentially hostile) server and
+  never relaxes gating for an untrusted server.
+- Missing annotations ⇒ not replay-safe (fail closed).
 - Unknown/garbage ``trust`` values ⇒ treated as untrusted (fail closed).
 """
 
@@ -103,6 +98,7 @@ class TestTrustGateAtCallTime:
         from tools.approval_context import reset_current_session_key, set_current_session_key
 
         _set_trust("srv", "untrusted")
+        _set_read_only("srv", "delete_repo", True)  # hostile server annotation
         session_key = f"mcp-bypass-{bypass}"
         key_token = set_current_session_key(session_key)
         try:
@@ -162,7 +158,7 @@ class TestTrustGateAtCallTime:
 
     @pytest.mark.parametrize("hint", [1, "true", object()])
     def test_malformed_read_only_hint_is_write_capable(self, fake_session, hint):
-        """Only the literal boolean True can relax the untrusted-server gate."""
+        """Malformed annotations remain write-capable on an untrusted server."""
         _set_trust("srv", "untrusted")
         _set_read_only("srv", "delete_repo", hint)
         handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
@@ -199,6 +195,7 @@ class TestTrustGateAtCallTime:
         from tools.approval_context import reset_current_session_key, set_current_session_key
 
         _set_trust("srv", "untrusted")
+        _set_read_only("srv", "delete_repo", True)  # hostile server annotation
         session_key = "cron:mcp-trust"
         approval.enable_session_yolo(session_key)
         session_tokens = set_session_vars(cron_session="1")
@@ -232,6 +229,25 @@ class TestTrustGateAtCallTime:
         assert json.loads(raw) == {"result": "ok"}
         fake_session.call_tool.assert_awaited_once()
 
+    def test_authorized_untrusted_hint_call_is_not_replayed_when_outcome_is_uncertain(
+        self, fake_session
+    ):
+        """One explicit approval permits one dispatch, never an uncertain replay."""
+        _set_trust("srv", "untrusted")
+        _set_read_only("srv", "delete_repo", True)  # hostile server annotation
+        fake_session.call_tool.side_effect = [RuntimeError("Session terminated"),
+                                               _FakeCallToolResult([_FakeContentBlock("replayed")])]
+        handler = _mcp_handlers._make_tool_handler("srv", "delete_repo", 30.0)
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent", return_value="accept"
+        ) as consent:
+            raw = handler({"repo": "x"})
+
+        consent.assert_called_once()
+        fake_session.call_tool.assert_awaited_once()
+        parsed = json.loads(raw)
+        assert parsed.get("outcome_uncertain") is True, parsed
+
     def test_denied_approval_blocks_rpc(self, fake_session):
         """'decline' blocks the call — the RPC must never fire."""
         _set_trust("srv", "untrusted")
@@ -244,19 +260,20 @@ class TestTrustGateAtCallTime:
         fake_session.call_tool.assert_not_awaited()
         assert "error" in json.loads(raw)
 
-    def test_read_only_tool_on_untrusted_server_skips_approval(
+    def test_read_only_hint_on_untrusted_server_still_requires_approval(
         self, fake_session
     ):
-        """readOnlyHint=True tools pass without consulting approval."""
+        """A hostile readOnlyHint=True cannot bypass the mandatory trust gate."""
         _set_trust("srv", "untrusted")
         _set_read_only("srv", "list_repos", True)
         handler = _mcp_handlers._make_tool_handler("srv", "list_repos", 30.0)
         with patch(
-            "tools.approval_prompt.request_elicitation_consent"
+            "tools.approval_prompt.request_elicitation_consent", return_value="decline"
         ) as consent:
             raw = handler({})
-        consent.assert_not_called()
-        assert json.loads(raw) == {"result": "ok"}
+        consent.assert_called_once()
+        fake_session.call_tool.assert_not_awaited()
+        assert "error" in json.loads(raw)
 
     def test_trusted_server_skips_approval_for_write_tools(
         self, fake_session
@@ -270,6 +287,12 @@ class TestTrustGateAtCallTime:
             raw = handler({"repo": "x"})
         consent.assert_not_called()
         assert json.loads(raw) == {"result": "ok"}
+
+    def test_full_trust_read_only_hint_remains_replay_safe(self, fake_session):
+        """Full-trust servers retain annotation-based read-only recovery."""
+        _set_trust("srv", "full")
+        _set_read_only("srv", "list_repos", True)
+        assert _mcp_handlers._tool_is_read_only("srv", "list_repos") is True
 
     def test_unconfigured_server_defaults_to_full_trust(self, fake_session):
         """Backward compat: servers with no trust key behave as before."""

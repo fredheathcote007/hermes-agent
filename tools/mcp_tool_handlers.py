@@ -50,10 +50,17 @@ _SESSION_OUTCOME_UNCERTAIN_MSG = (
 
 
 def _tool_is_read_only(server_name: str, tool_name: str) -> bool:
-    """True only when discovery captured ``readOnlyHint=True`` for the tool. Missing or malformed
-    metadata fails safe to False (treated as write-capable). readOnlyHint is a property of the
-    connection's tools, so it lives under the connection key."""
-    from tools.mcp_tool_scope import _resolve_server_key
+    """Whether a tool is safe to replay after a transport failure.
+
+    ``readOnlyHint`` is server-controlled metadata, so it is useful only for
+    the operator-trusted tier. An untrusted server's tools are all potentially
+    mutating, regardless of the hint, and must never be replayed automatically.
+    """
+    from tools.mcp_tool_scope import _resolve_server_key, _server_key
+    trust_key = _server_key(server_name)
+    trust = _core._server_trust_levels.get(trust_key, _core._TRUST_FULL)
+    if trust != _core._TRUST_FULL:
+        return False
     return _core._tool_read_only_hints.get(_resolve_server_key(server_name), {}).get(tool_name) is True
 
 
@@ -67,7 +74,9 @@ def _trust_gate_check(server_name: str, tool_name: str, booked: Optional[list] =
     # Trust and costs are the calling profile's own policy (an adopter of a shared connection keeps its own).
     key = _server_key(server_name)
     trust = _core._server_trust_levels.get(key, _core._TRUST_FULL)
-    gated = trust == _core._TRUST_UNTRUSTED and not _tool_is_read_only(server_name, tool_name)
+    # An untrusted server controls its own annotations. Every native tools/call
+    # therefore requires explicit per-call consent; no server hint relaxes this.
+    gated = trust != _core._TRUST_FULL
     charge = None
     if key in _core._server_cost_policies:  # no table: not even a session lookup, main's path byte for byte
         from tools.approval_context import get_current_session_key
@@ -100,7 +109,7 @@ def _ask_for_call(server_name: str, tool_name: str, charge, booked: Optional[lis
     extra = charge.lines(spent) if charge is not None else []
     if gated:
         head = f"MCP tool '{tool_name}' on UNTRUSTED server '{server_name}' wants to run."
-        tail = "This tool is write-capable (no readOnlyHint=true annotation) and may modify external state."
+        tail = "This untrusted server tool is treated as potentially mutating and may modify external state."
         # The limit notice leads: the messaging gateway's text fallback keeps only the first ~200 characters.
         message = " ".join([head, *(["This call goes past the chat's spend limit."] if over else []), *extra, tail])
         description = (f"Server '{server_name}' is configured 'trust: untrusted'. "
@@ -636,8 +645,8 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float, *,
             for charge in booked:
                 charge.refund()
             return error
-        # Only a tool annotated readOnlyHint=True is replayed after session expiry; a 401 is always
-        # pre-dispatch so the auth recoverer keeps its retry for every tool.
+        # Only a readOnlyHint=True tool on a full-trust server is replayed after session expiry;
+        # a 401 is always pre-dispatch so the auth recoverer keeps its retry for every tool.
         read_only = _tool_is_read_only(server_name, tool_name)
         image_paths: list[str] = []  # the LAST attempt's cached images (a recoverer may retry _call)
         # Read on the agent's thread: the coroutine below runs on the MCP loop, outside this context.
