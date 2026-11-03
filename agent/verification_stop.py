@@ -223,7 +223,7 @@ def build_verify_on_stop_nudge(
         return None
     status, facts = snapshot
     has_recipe = _workspace_has_runnable_recipe(facts.get("root"))
-    cheap_commands = _format_verify_commands(facts)
+    cheap_commands = _format_verify_commands(facts) if has_recipe else ""
 
     # Optional shipped coding guidance, only paid when this evidence gate fires.
     try:

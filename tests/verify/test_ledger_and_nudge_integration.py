@@ -213,7 +213,10 @@ def test_nudge_keeps_plain_wording_without_recipe_start(hermes_home):
     mark_workspace_edited(session_id="s1", cwd=project, paths=[changed])
     nudge = build_verify_on_stop_nudge(session_id="s1", changed_paths=[changed])
     assert nudge is not None
+    assert "npm run test" not in nudge
     assert "hermes verify" not in nudge
+    assert "No independent Hermes verification recipe is available" in nudge
+    assert "Do not invent or execute a worker-supplied verification command" in nudge
 
 
 def test_nudge_recipe_detection_failure_is_silent(hermes_home, monkeypatch):
