@@ -490,9 +490,9 @@ def record_verify_run(
 ) -> Optional[dict[str, Any]]:
     """Record a completed ``hermes verify`` run as verification evidence.
 
-    A pass marks the workspace ``passed`` for the verify-on-stop guard like a
-    canonical test command would. ``root`` is re-resolved through project facts
-    so it matches what :func:`verification_status` derives later.
+    A pass is recorded as diagnostic evidence only; it does not prove the
+    workspace or authorize completion. ``root`` is re-resolved through project
+    facts so it matches what :func:`verification_status` derives later.
     """
     if not _ledger_enabled():
         return None
@@ -507,7 +507,7 @@ def record_verify_run(
 
 
 def _insert_evidence(evidence: VerificationEvidence) -> dict[str, Any]:
-    """Insert a classified evidence row and repoint the workspace state."""
+    """Insert diagnostic evidence and repoint its workspace status; never proof of completion."""
     created_at = _utc_now()
     e = evidence
     with _DB_LOCK, _transaction() as conn:
@@ -532,7 +532,7 @@ def _insert_evidence(evidence: VerificationEvidence) -> dict[str, Any]:
             " changed_paths_json = '[]'",
             (e.session_id, e.root, event_id),
         )
-        # A full passing ``hermes verify`` proves the workspace. Partial or
+        # A full passing ``hermes verify`` remains diagnostic only. Partial or
         # failed runs must not wipe another session's edit record (#103650).
         if e.kind == "verify" and e.status == "passed" and e.scope == "full":
             conn.execute(

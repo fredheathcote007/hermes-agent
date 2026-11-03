@@ -78,6 +78,16 @@ def verify_on_stop_enabled(config: dict[str, Any] | None = None) -> bool:
     return token in _TRUTHY_TOKENS
 
 
+def codex_app_server_verification_blocked() -> bool:
+    """Whether Codex app-server must fail closed before starting a turn.
+
+    This compatibility lane has no protected controller receipt bridge. Keep
+    the opt-in environment/config semantics in ``verify_on_stop_enabled`` and
+    block the alternate runtime while that bridge remains unimplemented.
+    """
+    return verify_on_stop_enabled()
+
+
 def _candidate_cwds(paths: Iterable[str]) -> list[Path]:
     """Distinct resolved directories (a file's parent) for the edited paths, in order."""
     seen: dict[str, None] = {}
@@ -231,4 +241,7 @@ def build_verify_on_stop_nudge(
     )
 
 
-__all__ = ["build_verify_on_stop_nudge", "has_verifiable_paths", "verification_unresolved", "verify_on_stop_enabled"]
+__all__ = [
+    "build_verify_on_stop_nudge", "codex_app_server_verification_blocked", "has_verifiable_paths",
+    "verification_unresolved", "verify_on_stop_enabled",
+]

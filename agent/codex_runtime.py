@@ -726,6 +726,19 @@ def run_codex_app_server_turn(agent, *, user_message: str, original_user_message
                               effective_task_id: str, should_review_memory: bool = False) -> dict[str, Any]:
     """Hand the turn to a ``codex app-server`` subprocess and project its events into ``messages``.
     Returns the chat_completions result shape. The user message is ALREADY in ``messages`` — never append it again."""
+    # Defense in depth for direct callers that bypass conversation_loop: the compatibility lane has no
+    # protected receipt bridge, so enabled verify-on-stop must not start Codex or report success.
+    from agent.verification_stop import codex_app_server_verification_blocked
+
+    if codex_app_server_verification_blocked():
+        return _turn_result(
+            (False, None), messages, api_calls=0, completed=False,
+            error="protected verification receipt bridge unavailable",
+            final_response=(
+                "Work is incomplete: Codex app-server cannot run while verify-on-stop is enabled "
+                "because no protected independent-verification receipt bridge exists. No Codex turn was started."
+            ), failed=True, verification_unresolved=True, turn_exit_reason="verification_unresolved",
+        )
     # Defense in depth for compression.checkpoint_required: agent init refuses the combination, but
     # api_mode is mutable. Explicit-True check matches compress_context().
     if getattr(agent, "compression_checkpoint_required", False) is True:

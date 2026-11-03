@@ -146,6 +146,66 @@ class TestRunConversationCodexPath:
         assert result["codex_thread_id"] == "thread-stub-1"
         assert result["codex_turn_id"] == "turn-stub-1"
 
+    def test_verify_on_stop_blocks_codex_before_session_or_process_start(self, monkeypatch):
+        """The opt-in fail-closed boundary must precede every Codex side effect."""
+        monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+        run_turn = MagicMock(side_effect=AssertionError("Codex turn must not start"))
+        ensure_started = MagicMock(side_effect=AssertionError("Codex session must not start"))
+        monkeypatch.setattr(CodexAppServerSession, "run_turn", run_turn)
+        monkeypatch.setattr(CodexAppServerSession, "ensure_started", ensure_started)
+        # These are the dedicated Codex start/dispatch boundaries. Avoid globally
+        # mocking subprocess.Popen: unrelated Git project-facts probes use it.
+
+        agent = _make_codex_agent()
+        with patch.object(agent, "_spawn_background_review", return_value=None):
+            result = agent.run_conversation("edit the code")
+
+        assert result["completed"] is False
+        assert result["partial"] is True
+        assert result["failed"] is True
+        assert result["verification_unresolved"] is True
+        assert result["turn_exit_reason"] == "verification_unresolved"
+        assert "No Codex turn was started" in result["final_response"]
+        run_turn.assert_not_called()
+        ensure_started.assert_not_called()
+
+    def test_verify_on_stop_disabled_preserves_codex_app_server_flow(self, monkeypatch):
+        """The explicit off value retains the existing app-server route."""
+        monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "0")
+        run_turn = MagicMock(return_value=TurnResult(
+            final_text="done", projected_messages=[{"role": "assistant", "content": "done"}],
+            turn_id="turn-off-1", thread_id="thread-off-1",
+        ))
+        ensure_started = MagicMock(return_value="thread-off-1")
+        monkeypatch.setattr(CodexAppServerSession, "run_turn", run_turn)
+        monkeypatch.setattr(CodexAppServerSession, "ensure_started", ensure_started)
+
+        agent = _make_codex_agent()
+        with patch.object(agent, "_spawn_background_review", return_value=None):
+            result = agent.run_conversation("hello")
+
+        assert result["completed"] is True
+        assert result["partial"] is False
+        run_turn.assert_called_once()
+        ensure_started.assert_called_once()
+
+    def test_direct_codex_runtime_call_also_fails_closed(self, monkeypatch):
+        """The runtime entrypoint cannot bypass the conversation-loop guard."""
+        monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+        from agent.codex_runtime import run_codex_app_server_turn
+
+        agent = _make_codex_agent()
+        result = run_codex_app_server_turn(
+            agent, user_message="edit", original_user_message="edit", messages=[], effective_task_id="task-1",
+        )
+
+        assert result["completed"] is False
+        assert result["partial"] is True
+        assert result["failed"] is True
+        assert result["verification_unresolved"] is True
+        assert result["turn_exit_reason"] == "verification_unresolved"
+        assert getattr(agent, "_codex_session", None) is None
+
     def test_codex_app_server_token_usage_updates_session_accounting(self, monkeypatch):
         def fake_run_turn(self, user_input: str, **kwargs):
             return TurnResult(
