@@ -122,43 +122,41 @@ def _is_secret_argument_name(key: Any) -> bool:
     is_cookie_field = compact.endswith(
         ("cookie", "cookies", "setcookie", "cookieheader", "cookievalue", "cookiejar")
     )
+    # Opaque credential keys often end in "key", not in "secret" or "token".
+    # Require an authenticator/credential qualifier to avoid masking unrelated
+    # target identifiers such as object_key, idempotency_key, or publicKey.
+    sensitive_key = compact.endswith(("key", "keyid")) and any(
+        qualifier in compact
+        for qualifier in ("secret", "private", "credential", "password", "api",
+                          "access", "client", "auth", "token", "signing",
+                          "encryption", "hmac", "ssh")
+    )
     return (
         is_secret_field_name(key)
         or folded in SECRET_HEADER_NAME_LIST
         or compact in {"auth", "authorization", "bearer", "token", "secret", "password", "credential"}
         or is_auth_header
         or is_cookie_field
+        or sensitive_key
         or compact.endswith(("apikey", "token", "secret", "password", "credential"))
     )
 
 
-def _redact_inline_secret_headers(text: str) -> str:
-    """Mask opaque values in multiline or quoted HTTP header text."""
+def _reject_unstructured_secret_headers(text: str) -> None:
+    """Fail closed on opaque credentials embedded inside arbitrary text.
+
+    Header blobs and shell-quoted -H snippets cannot be redacted reliably
+    without misidentifying delimiters and showing only part of a secret. The
+    caller must instead supply structured headers whose values can be masked.
+    """
     import re
 
-    pattern = re.compile(r"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{1,64})[ \t]*:[ \t]*")
-    rendered = []
-    cursor = 0
-    for match in pattern.finditer(text):
-        if match.start() < cursor or not _is_secret_argument_name(match.group(1)):
-            continue
-        end = len(text)
-        for delimiter in ("\r", "\n"):
-            index = text.find(delimiter, match.end())
-            if index >= 0:
-                end = min(end, index)
-        # Only an immediately preceding quote can delimit a curl-style header.
-        # An unrelated apostrophe elsewhere must never shorten the masked value.
-        if match.start() > 0 and text[match.start() - 1] in ("'", '"'):
-            index = text.find(text[match.start() - 1], match.end())
-            if index >= 0:
-                end = min(end, index)
-        if not text[match.end():end].strip():
-            continue
-        rendered.extend((text[cursor:match.end()], "***"))
-        cursor = end
-    rendered.append(text[cursor:])
-    return "".join(rendered)
+    for match in re.finditer(
+        r"""(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{1,64})(?:\\*["'])?\s*:[ \t]*""",
+        text,
+    ):
+        if _is_secret_argument_name(match.group(1)):
+            raise ValueError("unstructured credential header cannot be safely previewed")
 
 
 def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -> Any:
@@ -170,10 +168,10 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
     if isinstance(value, str):
         # This is deliberately before control escaping and the preview size check. The central
         # redactor can therefore see token characters separated by controls or other formatting.
-        # Opaque credentials can also arrive inside multiline header blocks or
-        # curl-style quoted -H arguments, not just a single "Cookie: value" line.
-        redacted = _redact_inline_secret_headers(value)
-        redacted = redact_sensitive_text(redacted, force=True)
+        # Reject credential-like headers embedded in free text. Quote/folding
+        # parsing would risk partial masking and accidental operator disclosure.
+        _reject_unstructured_secret_headers(value)
+        redacted = redact_sensitive_text(value, force=True)
         if not isinstance(redacted, str):
             raise ValueError("preview redaction failed")
         if not budget.account(len(redacted)):
@@ -210,6 +208,9 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
             for key, item in value.items():
                 if not isinstance(key, str) or len(key) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
                     raise ValueError("invalid preview key")
+                # Untrusted argument keys may themselves contain pasted header
+                # blocks or quoted JSON; never expose embedded credential text.
+                _reject_unstructured_secret_headers(key)
                 secret_field = _is_secret_argument_name(key)
                 # MCP transports commonly represent headers as {name: ..., value: ...}; the
                 # header name is attacker-controlled, so classify the value from that name too.
