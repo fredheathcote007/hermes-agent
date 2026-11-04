@@ -7,11 +7,13 @@ import contextvars
 import inspect
 import json
 import math
+import re
 import time
+import unicodedata
 from contextlib import asynccontextmanager
 from functools import partial
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from hermes_platform import declaration
 from tools.registry import invalidate_check_fn_cache, tool_error
@@ -70,6 +72,37 @@ _TRUST_GATE_ARGUMENTS_MAX_NODES = 256
 _TRUST_GATE_ARGUMENTS_MAX_DEPTH = 32
 _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS = 64_000
 _TRUST_GATE_ARGUMENTS_SERIALIZATION_BUDGET = 4 * _TRUST_GATE_ARGUMENTS_MAX_CHARS + 512
+_TRUST_GATE_CLASSIFICATION_MAX_PASSES = 8
+_HEADER_NAME_CANDIDATE_MAX_CHARS = 256
+_SECRET_NAME_IGNORABLE_CATEGORIES = frozenset({"Cc", "Cf", "Cn", "Me", "Mn", "Zl", "Zp", "Zs"})
+_SECRET_NAME_IGNORABLE_CHARS = frozenset({"\u115f", "\u1160", "\u2800", "\u3164", "\uffa0"})
+_HEADER_NAME_RFC7230_SEPARATORS = frozenset("!#$%&'*+-.^_`|~")
+_HEADER_NAME_SEPARATOR_CATEGORIES = frozenset(
+    {
+        "Pc", "Pd", "Pe", "Pf", "Pi", "Po", "Ps",
+        "Sc", "Sk", "Sm", "So",
+    }
+)
+_CREDENTIAL_KEY_QUALIFIERS = frozenset(
+    {
+        "secret", "private", "credential", "password", "api", "access", "client",
+        "auth", "token", "signing", "encryption", "hmac", "ssh",
+    }
+)
+_PUBLIC_KEY_NAMES = frozenset({"publickey", "publickeyid", "sshpublickey", "sshpublickeyid"})
+_NON_SECRET_KEY_BASES = frozenset({"author", "authority", "capital", "rapid"})
+_HEADER_NAME_KEY_ALIASES = frozenset(
+    {"name", "key", "k", "label", "field", "header", "headername", "headerkey", "fieldname", "keyname"}
+)
+_HEADER_VALUE_KEY_ALIASES = frozenset(
+    {
+        "value", "val", "v", "headervalue", "fieldvalue",
+        "content", "data", "text", "body", "raw", "contents", "payload", "values", "valuestring",
+        "headercontent", "fieldcontent", "headerdata", "fielddata",
+    }
+)
+_AMBIGUOUS_HEADER_VALUE_ALIASES = frozenset({"content", "data", "body", "payload"})
+_HEADER_COLON_CONFUSABLES = frozenset({"\u2236", "\u205a", "\u2254", "\u2255"})
 
 
 class _TrustGatePreviewBudget:
@@ -88,6 +121,13 @@ class _TrustGatePreviewBudget:
             raise ValueError("preview node limit")
         if isinstance(value, str) and len(value) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
             raise ValueError("preview scalar limit")
+        if isinstance(value, int) and not isinstance(value, bool):
+            try:
+                encoded = json.dumps(value, allow_nan=False)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("invalid integer preview value") from None
+            if len(encoded) > _TRUST_GATE_ARGUMENTS_SERIALIZATION_BUDGET:
+                raise ValueError("preview integer limit")
 
     def account(self, chars: int) -> bool:
         self.estimated_chars += chars
@@ -96,14 +136,137 @@ class _TrustGatePreviewBudget:
         return True
 
 
+def _merge_surrogate_pairs(text: str) -> str:
+    """Decode JSON UTF-16 pairs while rejecting ambiguous lone surrogates."""
+    result = []
+    index = 0
+    while index < len(text):
+        codepoint = ord(text[index])
+        if 0xD800 <= codepoint <= 0xDBFF:
+            if index + 1 >= len(text):
+                raise ValueError("lone surrogate in secret name")
+            low = ord(text[index + 1])
+            if not 0xDC00 <= low <= 0xDFFF:
+                raise ValueError("invalid surrogate pair in secret name")
+            result.append(chr(0x10000 + ((codepoint - 0xD800) << 10) + low - 0xDC00))
+            index += 2
+            continue
+        if 0xDC00 <= codepoint <= 0xDFFF:
+            raise ValueError("lone surrogate in secret name")
+        result.append(text[index])
+        index += 1
+    return "".join(result)
+
+
+def _contains_escaped_control(text: str) -> bool:
+    """Reject escapes that turn an ambiguous structured name into a control string."""
+    short_escapes = {"a": "\a", "b": "\b", "f": "\f", "n": "\n",
+                     "r": "\r", "t": "\t", "v": "\v"}
+    for index, char in enumerate(text[:-1]):
+        if char != "\\":
+            continue
+        escaped = text[index + 1]
+        if escaped in short_escapes:
+            return True
+        digits = {"x": 2, "u": 4, "U": 8}.get(escaped)
+        if digits is not None:
+            candidate = text[index + 2:index + 2 + digits]
+            if len(candidate) == digits and all(char in "0123456789abcdefABCDEF" for char in candidate):
+                codepoint = int(candidate, 16)
+                if codepoint <= 0x10FFFF and unicodedata.category(chr(codepoint)) in {"Cc", "Cs"}:
+                    return True
+        if escaped in "01234567":
+            end = index + 1
+            while end < len(text) and end < index + 4 and text[end] in "01234567":
+                end += 1
+            if unicodedata.category(chr(int(text[index + 1:end], 8))) in {"Cc", "Cs"}:
+                return True
+    return False
+
+
+def _canonicalize_secret_name(text: str) -> str:
+    """Apply the same bounded escape and Unicode view to every structured name."""
+    if len(text) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+        raise ValueError("secret-name classification budget")
+    view = text
+    for _ in range(_TRUST_GATE_CLASSIFICATION_MAX_PASSES + 1):
+        if _contains_escaped_control(view):
+            raise ValueError("control escape in secret name")
+        view = _merge_surrogate_pairs(_canonicalize_classification_view(view))
+        view = unicodedata.normalize("NFKC", view).casefold()
+        if "\\" in view:
+            raise ValueError("ambiguous escape in secret name")
+        if len(view) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+            raise ValueError("secret-name classification budget")
+        if view == text:
+            return view
+        text = view
+    raise ValueError("secret-name escape nesting exceeds preview limit")
+
+
+def _secret_name_view(key: str) -> str:
+    """Return a bounded, compatibility-normalized view with invisible marks removed."""
+    if len(key) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+        raise ValueError("secret-name classification budget")
+    normalized = _canonicalize_secret_name(key)
+    if len(normalized) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+        raise ValueError("secret-name classification budget")
+    return "".join(
+        char for char in normalized
+        if not _is_secret_name_ignorable(char)
+    )
+
+
+def _is_secret_name_ignorable(char: str) -> bool:
+    """Whether *char* is unambiguously invisible or a separator in a name classifier."""
+    return (
+        char in _SECRET_NAME_IGNORABLE_CHARS
+        or char.isspace()
+        or unicodedata.category(char) in _SECRET_NAME_IGNORABLE_CATEGORIES
+    )
+
+
+def _compact_secret_name(key: Any) -> str:
+    """Compact a possibly obfuscated name for classification, without changing payload data."""
+    if not isinstance(key, str):
+        return ""
+    return "".join(char for char in _secret_name_view(key) if char.isalnum())
+
+
+def _secret_name_parts(key: str) -> tuple[str, ...]:
+    """Split a validated field name at punctuation and camel-case boundaries."""
+    _canonicalize_secret_name(key)
+    view = key
+    for _ in range(_TRUST_GATE_CLASSIFICATION_MAX_PASSES + 1):
+        view = _merge_surrogate_pairs(_canonicalize_classification_view(view))
+        view = unicodedata.normalize("NFKC", view)
+        if "\\" not in view:
+            break
+    view = "".join(char for char in view if not _is_secret_name_ignorable(char))
+    view = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", view)
+    parts = []
+    current = []
+    for char in view:
+        if char.isalnum():
+            current.append(char.casefold())
+        elif current:
+            parts.append("".join(current))
+            current = []
+    if current:
+        parts.append("".join(current))
+    return tuple(parts)
+
+
 def _is_secret_argument_name(key: Any) -> bool:
     """Whether a structured argument key names a credential or secret header."""
     from agent.redact import SECRET_HEADER_NAME_LIST, is_secret_field_name
 
     if not isinstance(key, str):
         return False
-    folded = key.casefold()
-    compact = "".join(char for char in folded if char.isalnum())
+    folded = _secret_name_view(key)
+    compact = _compact_secret_name(key)
+    parts = _secret_name_parts(key)
+    part_set = set(parts)
     # Match credential-bearing header variants (X-Authentication, X-Auth-Data,
     # Proxy-Auth, etc.) without treating descriptive author fields as secrets.
     is_auth_header = (
@@ -113,8 +276,9 @@ def _is_secret_argument_name(key: Any) -> bool:
         # remain descriptive, but authorisation is credential-bearing by default.
         "authorization" in compact
         or "authorisation" in compact
-        or compact == "oauth"
-        or ("auth" in compact and "author" not in compact)
+        or "oauth" in part_set
+        or "authentication" in part_set
+        or "auth" in part_set
     )
     # Cookie headers and cookie-shaped fields carry opaque session material even when the
     # value does not resemble a credential to the text redactor. Keep descriptive cookie
@@ -122,24 +286,218 @@ def _is_secret_argument_name(key: Any) -> bool:
     is_cookie_field = compact.endswith(
         ("cookie", "cookies", "setcookie", "cookieheader", "cookievalue", "cookiejar")
     )
-    # Opaque credential keys often end in "key", not in "secret" or "token".
-    # Require an authenticator/credential qualifier to avoid masking unrelated
-    # target identifiers such as object_key, idempotency_key, or publicKey.
-    sensitive_key = compact.endswith(("key", "keyid")) and any(
-        qualifier in compact
-        for qualifier in ("secret", "private", "credential", "password", "api",
-                          "access", "client", "auth", "token", "signing",
-                          "encryption", "hmac", "ssh")
+    # Opaque credential keys often end in "key", not in "secret" or "token". Preserve the
+    # original compact substring matching: model-chosen names can use punctuation, Unicode
+    # separators, odd casing, or digit suffixes to bypass a segment-only classifier.
+    ends_in_key = compact.endswith(("key", "keyid"))
+    has_api_qualifier = any(part == "api" or part.startswith("api") for part in parts)
+    sensitive_key = (
+        ends_in_key
+        and (
+            bool(part_set & _CREDENTIAL_KEY_QUALIFIERS)
+            or has_api_qualifier
+        )
     )
+    key_base = compact[:-5] if compact.endswith("keyid") else compact[:-3]
+    if key_base in _NON_SECRET_KEY_BASES:
+        sensitive_key = False
+    if compact in _PUBLIC_KEY_NAMES or ("public" in part_set and "key" in part_set):
+        sensitive_key = False
+    if "key" in part_set and any(part in part_set for part in ("secret", "private", "credential", "credentials", "password", "passwd")):
+        sensitive_key = True
+    if compact in {
+        "accesskey", "accesskeyid", "clientkey", "signingkey",
+        "authoroauth", "authorauthentication", "keymaterial",
+    }:
+        sensitive_key = True
     return (
-        is_secret_field_name(key)
+        is_secret_field_name(folded)
         or folded in SECRET_HEADER_NAME_LIST
         or compact in {"auth", "authorization", "bearer", "token", "secret", "password", "credential"}
         or is_auth_header
         or is_cookie_field
         or sensitive_key
-        or compact.endswith(("apikey", "token", "secret", "password", "credential"))
+        or compact.endswith(("apikey", "token", "secret", "password", "passwd", "credential", "credentials"))
+        or compact.startswith(("secret", "password", "passwd", "credential"))
+        or compact == "keymaterial"
+        or compact in {"authoroauth", "authorauthentication"}
     )
+
+
+def _is_header_colon(char: str) -> bool:
+    """Whether *char* can delimit a header name in attacker-controlled text."""
+    if char == ":" or char in _HEADER_COLON_CONFUSABLES:
+        return True
+    # This includes FULLWIDTH/SMALL/MODIFIER/SYRIAC colon forms without treating
+    # SEMICOLON or COLON SIGN as a header delimiter. Names such as SYRIAC COLON
+    # SKEWED LEFT do not end in COLON, so retain their explicit name component.
+    name = unicodedata.name(char, "")
+    return name.endswith(" COLON") or name.startswith("SYRIAC ") and " COLON " in name
+
+
+def _is_header_name_char(char: str) -> bool:
+    """Whether *char* can occur inside a possibly obfuscated header name."""
+    if _is_header_colon(char):
+        return False
+    # Whitespace is prose structure. Treating it as a name character makes a
+    # colon at the end of a paragraph classify every earlier credential word.
+    if char.isspace():
+        return False
+    if char.isalnum() or _is_secret_name_ignorable(char):
+        return True
+    if char in _HEADER_NAME_RFC7230_SEPARATORS:
+        return True
+    if unicodedata.category(char) in _HEADER_NAME_SEPARATOR_CATEGORIES:
+        return True
+    # MINUS SIGN and slash-like compatibility characters are common rich-text
+    # substitutions for ASCII name separators but do not all share its category.
+    name = unicodedata.name(char, "")
+    if any(part in name for part in ("DASH", "HYPHEN", "MINUS", "SOLIDUS", "SLASH")):
+        return True
+    normalized = unicodedata.normalize("NFKC", char)
+    return normalized != char and all(
+        _is_secret_name_ignorable(part)
+        or part.isalnum()
+        or part in _HEADER_NAME_RFC7230_SEPARATORS
+        for part in normalized
+    )
+
+
+def _header_name_before_colon(text: str, colon_index: int) -> Optional[str]:
+    """Extract the compact name immediately before a header-like separator."""
+    cursor = colon_index - 1
+    while cursor >= 0 and _is_secret_name_ignorable(text[cursor]):
+        if colon_index - cursor > _HEADER_NAME_CANDIDATE_MAX_CHARS:
+            raise ValueError("header name candidate span limit")
+        cursor -= 1
+    end = cursor + 1
+    while cursor >= 0 and _is_header_name_char(text[cursor]):
+        if colon_index - cursor > _HEADER_NAME_CANDIDATE_MAX_CHARS:
+            raise ValueError("header name candidate span limit")
+        cursor -= 1
+    if end == cursor + 1:
+        return None
+    # Do not retain the old ASCII regex's 64-character cutoff: an attacker can pad a
+    # credential name with format characters and otherwise make the live value visible.
+    candidate = text[cursor + 1:end]
+    # Preserve fail-closed handling for a compact credential-shaped obfuscation
+    # before treating punctuation as a prose boundary.
+    if _is_secret_argument_name(candidate):
+        return candidate
+    # Punctuation outside the RFC name set is an ambiguity boundary. Use the
+    # final token for ordinary prose, while the caller's repeated canonical
+    # passes still reject credential-shaped obfuscations such as ``api=key``.
+    for split in range(len(candidate) - 1, -1, -1):
+        if candidate[split].isalnum() or _is_secret_name_ignorable(candidate[split]):
+            continue
+        if candidate[split] in _HEADER_NAME_RFC7230_SEPARATORS:
+            continue
+        candidate = candidate[split + 1:]
+        break
+    return candidate
+
+
+def _header_candidate_is_uri_or_path(text: str, colon_index: int, candidate: str) -> bool:
+    """Avoid treating a host, registry path, or URL port as a header name."""
+    prefix = text[:colon_index]
+    scheme_start = prefix.rfind("://")
+    if scheme_start >= 0:
+        scheme = prefix[:scheme_start].rsplit(None, 1)[-1]
+        if scheme and all(char.isalnum() or char in "+-." for char in scheme):
+            return True
+    if "/" not in candidate or any(char.isspace() for char in candidate):
+        return False
+    first_component = candidate.split("/", 1)[0].strip("\"'`\\")
+    return candidate.startswith("/") or "." in first_component
+
+
+def _header_candidate_has_structural_context(text: str, colon_index: int) -> bool:
+    """Recognize a header token at a credible boundary without trusting prose context."""
+    line_start = max(text.rfind("\n", 0, colon_index), text.rfind("\r", 0, colon_index)) + 1
+    prefix = text[line_start:colon_index].rstrip()
+    cursor = len(prefix) - 1
+    while cursor >= 0 and _is_header_name_char(prefix[cursor]):
+        cursor -= 1
+    before_name = prefix[:cursor + 1].rstrip()
+    if not before_name:
+        return True
+    if before_name[-1] in "{[(:,;":
+        return True
+    marker = before_name.rsplit(None, 1)[-1]
+    if marker in {"-H", "--header", "-h"}:
+        return True
+    # A prose prefix is not enough to classify an ordinary ``authorization:`` sentence
+    # as a header. Other secret-shaped header names are not safely distinguishable from
+    # credential-bearing prose when their value has no structured name=value shape, so
+    # fail closed rather than rely on the central redactor to recognize every value.
+    candidate = _header_name_before_colon(text, colon_index)
+    if candidate is None:
+        return False
+    compact = _compact_secret_name(candidate)
+    return compact != "authorization" and _is_secret_argument_name(candidate)
+
+
+def _canonicalize_classification_view(text: str) -> str:
+    """Decode one bounded layer of common string escapes for classification only."""
+    replacements = {
+        '"': '"', "'": "'", "`": "`", "\\": "\\", "/": "/",
+        "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
+        "t": "\t", "v": "\v",
+    }
+    output = []
+    output_chars = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char != "\\" or index + 1 >= len(text):
+            output.append(char)
+            output_chars += 1
+            if output_chars > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+                raise ValueError("classification normalization budget")
+            index += 1
+            continue
+
+        escaped = text[index + 1]
+        replacement = replacements.get(escaped)
+        consumed = 2
+        if escaped in ("x", "u", "U"):
+            digits = {"x": 2, "u": 4, "U": 8}[escaped]
+            end = index + 2 + digits
+            candidate = text[index + 2:end]
+            if len(candidate) == digits and all(char in "0123456789abcdefABCDEF" for char in candidate):
+                codepoint = int(candidate, 16)
+                if codepoint <= 0x10FFFF:
+                    replacement = chr(codepoint)
+                    consumed = 2 + digits
+        if replacement is None and escaped in "01234567":
+            end = index + 1
+            while end < len(text) and end < index + 4 and text[end] in "01234567":
+                end += 1
+            replacement = chr(int(text[index + 1:end], 8))
+            consumed = end - index
+        if replacement is None:
+            # Preserve malformed or unknown escapes and let a later bounded pass
+            # inspect any suffix without throwing or changing operator text.
+            output.extend(("\\", escaped))
+            output_chars += 2
+        else:
+            output.append(replacement)
+            output_chars += len(replacement)
+        index += consumed
+        if output_chars > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+            raise ValueError("classification normalization budget")
+    return "".join(output)
+
+
+def _scan_unstructured_secret_headers(text: str) -> None:
+    text = _merge_surrogate_pairs(text)
+    for index, char in enumerate(text):
+        if _is_header_colon(char):
+            name = _header_name_before_colon(text, index)
+            if (name is not None and _is_secret_argument_name(name)
+                    and not _header_candidate_is_uri_or_path(text, index, name)
+                    and _header_candidate_has_structural_context(text, index)):
+                raise ValueError("unstructured credential header cannot be safely previewed")
 
 
 def _reject_unstructured_secret_headers(text: str) -> None:
@@ -149,17 +507,110 @@ def _reject_unstructured_secret_headers(text: str) -> None:
     without misidentifying delimiters and showing only part of a secret. The
     caller must instead supply structured headers whose values can be masked.
     """
-    import re
+    view = _merge_surrogate_pairs(text)
+    for pass_number in range(_TRUST_GATE_CLASSIFICATION_MAX_PASSES + 1):
+        _scan_unstructured_secret_headers(view)
+        next_view = _canonicalize_classification_view(view)
+        next_view = _merge_surrogate_pairs(next_view)
+        if next_view == view:
+            return
+        if pass_number == _TRUST_GATE_CLASSIFICATION_MAX_PASSES:
+            raise ValueError("unstructured header escape nesting exceeds preview limit")
+        view = next_view
 
-    for match in re.finditer(
-        r"""(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{1,64})(?:\\*["'])?\s*:[ \t]*""",
-        text,
-    ):
-        if _is_secret_argument_name(match.group(1)):
-            raise ValueError("unstructured credential header cannot be safely previewed")
+
+def _validate_preview_payload(value: Any, *, _budget=None, _depth: int = 0) -> None:
+    """Walk the complete payload before field-aware masking hides any subtree."""
+    budget = _budget or _TrustGatePreviewBudget()
+    budget.visit(value, _depth)
+    if isinstance(value, str):
+        _merge_surrogate_pairs(value)
+        _reject_unstructured_secret_headers(value)
+        if not budget.account(len(value)):
+            raise ValueError("preview serialization budget")
+        return
+    if value is None or isinstance(value, (bool, int)):
+        if isinstance(value, int) and not isinstance(value, bool):
+            encoded = json.dumps(value, allow_nan=False)
+            size = len(encoded)
+        else:
+            size = 8
+        if not budget.account(size):
+            raise ValueError("preview serialization budget")
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("non-finite preview value")
+        if not budget.account(16):
+            raise ValueError("preview serialization budget")
+        return
+    if isinstance(value, dict):
+        identity = id(value)
+        if identity in budget.active_ids:
+            raise ValueError("cyclic preview value")
+        budget.active_ids.add(identity)
+        try:
+            for key, item in value.items():
+                if not isinstance(key, str) or len(key) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
+                    raise ValueError("invalid preview key")
+                _secret_name_view(key)
+                _reject_unstructured_secret_headers(key)
+                _validate_preview_payload(item, _budget=budget, _depth=_depth + 1)
+                if not budget.account(len(key) + 4):
+                    raise ValueError("preview serialization budget")
+        finally:
+            budget.active_ids.remove(identity)
+        return
+    if isinstance(value, (list, tuple)):
+        identity = id(value)
+        if identity in budget.active_ids:
+            raise ValueError("cyclic preview value")
+        budget.active_ids.add(identity)
+        try:
+            for item in value:
+                _validate_preview_payload(item, _budget=budget, _depth=_depth + 1)
+                if not budget.account(2):
+                    raise ValueError("preview serialization budget")
+        finally:
+            budget.active_ids.remove(identity)
+        return
+    raise ValueError("unsupported preview value")
 
 
-def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -> Any:
+def _is_header_name_alias(key: Any) -> bool:
+    """Whether a structured object key can identify its header name."""
+    return _compact_secret_name(key) in _HEADER_NAME_KEY_ALIASES
+
+
+def _is_header_value_alias(key: Any) -> bool:
+    """Whether a structured object key can carry the associated header value."""
+    return _compact_secret_name(key) in _HEADER_VALUE_KEY_ALIASES
+
+
+def _is_header_collection_key(key: Any) -> bool:
+    return _compact_secret_name(key) in {
+        "header", "headers", "headerlist", "headerblock", "headercollection", "headerpairs",
+        "requestheaders", "extraheaders", "pairs",
+    }
+
+
+def _looks_like_header_name(value: Any) -> bool:
+    if not isinstance(value, str) or not _is_secret_argument_name(value):
+        return False
+    compact = _compact_secret_name(value)
+    parts = _secret_name_parts(value)
+    return (
+        compact in {"auth", "oauth", "authorization", "authorisation", "cookie", "setcookie"}
+        or "authorization" in compact
+        or "authorisation" in compact
+        or compact.endswith(("apikey", "token", "secret", "password", "passwd", "credential", "credentials", "key", "keyid"))
+        or compact.endswith("auth")
+        or "-" in value and bool(set(parts) & {"auth", "authorization", "authorisation", "cookie"})
+    )
+
+
+def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
+                                 _header_context: bool = False) -> Any:
     """Redact structured values recursively, with bounded traversal and no object reprs."""
     from agent.redact import redact_sensitive_text
 
@@ -196,13 +647,19 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
             # Header objects may use mixed-case Name/Value or key/value pairs.
             # If several candidate labels are present, any credential-shaped label
             # makes the associated value sensitive; no arbitrary first-key wins.
+            header_names = [
+                item for key, item in value.items()
+                if _is_header_name_alias(key) and isinstance(item, str)
+                and (_header_context or _looks_like_header_name(item))
+            ]
             header_is_secret = any(
-                isinstance(key, str) and isinstance(item, str)
-                and "".join(char for char in key.casefold() if char.isalnum())
-                    in {"name", "key", "header", "headername", "headerkey",
-                        "fieldname", "keyname"}
+                _is_header_name_alias(key) and isinstance(item, str)
                 and _is_secret_argument_name(item)
+                and (_header_context or _looks_like_header_name(item))
                 for key, item in value.items()
+            )
+            ambiguous_header_values_are_credential_data = any(
+                _compact_secret_name(name) not in {"auth", "oauth"} for name in header_names
             )
             result = {}
             for key, item in value.items():
@@ -212,15 +669,27 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
                 # blocks or quoted JSON; never expose embedded credential text.
                 _reject_unstructured_secret_headers(key)
                 secret_field = _is_secret_argument_name(key)
-                # MCP transports commonly represent headers as {name: ..., value: ...}; the
-                # header name is attacker-controlled, so classify the value from that name too.
-                compact_key = "".join(char for char in key.casefold() if char.isalnum())
-                header_value = (compact_key in {"value", "val", "v", "headervalue",
-                                               "fieldvalue"} and header_is_secret)
-                if secret_field and item not in (None, "") or header_value and item not in (None, ""):
+                # Only a recognized value alias is associated with the header name. Other
+                # siblings remain visible so the operator sees the consequential payload.
+                header_value_field = (
+                    header_is_secret
+                    and _is_header_value_alias(key)
+                    and (
+                        _compact_secret_name(key) not in _AMBIGUOUS_HEADER_VALUE_ALIASES
+                        or (
+                            ambiguous_header_values_are_credential_data
+                            and not isinstance(item, (dict, list, tuple))
+                        )
+                    )
+                )
+                masked_item = _mask_secret_argument_fields(
+                    item, _budget=budget, _depth=_depth + 1,
+                    _header_context=_header_context or _is_header_collection_key(key),
+                )
+                if (header_value_field or secret_field) and item not in (None, ""):
                     result[key] = "***"
                 else:
-                    result[key] = _mask_secret_argument_fields(item, _budget=budget, _depth=_depth + 1)
+                    result[key] = masked_item
                 if not budget.account(len(key) + 4):
                     raise ValueError("preview serialization budget")
             return result
@@ -232,19 +701,23 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
             raise ValueError("cyclic preview value")
         budget.active_ids.add(identity)
         try:
-            # HTTP header collections may be represented as [name, value] pairs.
-            # Never expose the second element if the first names a credential.
+            # HTTP header collections may be represented as [name, value, ...] arrays.
+            # Never expose a trailing element if the first names a credential.
             credential_pair = (
-                len(value) == 2 and isinstance(value[0], str)
+                len(value) >= 2 and isinstance(value[0], str)
                 and _is_secret_argument_name(value[0])
+                and (_header_context or _looks_like_header_name(value[0]))
             )
             result = []
             for index, item in enumerate(value):
+                masked_item = _mask_secret_argument_fields(
+                    item, _budget=budget, _depth=_depth + 1,
+                    _header_context=_header_context,
+                )
                 if credential_pair and index == 1 and item not in (None, ""):
                     result.append("***")
                 else:
-                    result.append(_mask_secret_argument_fields(
-                        item, _budget=budget, _depth=_depth + 1))
+                    result.append(masked_item)
                 if not budget.account(2):
                     raise ValueError("preview serialization budget")
             return result
@@ -261,7 +734,7 @@ def _escape_trust_gate_controls(text: str) -> str:
         # JSON encoding yields correct UTF-16 surrogate pairs for non-BMP Cf
         # characters rather than ambiguous five/six-digit backslash-u escapes.
         json.dumps(char, ensure_ascii=True)[1:-1]
-        if char != "\n" and unicodedata.category(char) in ("Cc", "Cf")
+        if char != "\n" and unicodedata.category(char) in ("Cc", "Cf", "Cs")
         else char
         for char in text
     )
@@ -276,6 +749,7 @@ def _format_trust_gate_arguments(args: Any, *, compact: bool = False) -> Optiona
     from agent.redact import redact_sensitive_text
 
     try:
+        _validate_preview_payload(args)
         sanitized = _mask_secret_argument_fields(args)
         rendered = json.dumps(
             # Gateway cards require ASCII-safe JSON. CLI/TUI may display Unicode
