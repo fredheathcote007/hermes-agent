@@ -182,11 +182,85 @@ def test_ambiguous_secret_sequences_do_not_leak_before_consent_rpc_and_cost(
     assert "error" in json.loads(raw)
 
 
-def test_generic_auth_payload_sequence_control_stays_visible():
-    args = {"name": "auth", "payload": {"target": "/prod", "op": "delete"}}
+@pytest.mark.parametrize("name", ["auth", "oauth", "auth_check"])
+def test_generic_auth_payload_sequence_control_stays_visible(name):
+    args = {"name": name, "payload": {"target": "/prod", "operation": "delete"}}
     preview = _mcp_handlers._format_trust_gate_arguments(args)
     assert preview is not None
     assert json.loads(preview) == args
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"name": "X-Auth-Session", "value": "SYNTH"},
+        {"name": "Auth-Bearer", "value": "SYNTH"},
+        {"name": "X-Auth-Id", "value": "SYNTH"},
+        {"k": "Auth-Session", "v": "SYNTH"},
+    ],
+    ids=["x-auth-session", "auth-bearer", "x-auth-id", "key-value-auth-session"],
+)
+def test_auth_header_variants_mask_credential_values(args):
+    preview = _mcp_handlers._format_trust_gate_arguments(args)
+    assert preview is not None
+    assert "SYNTH" not in preview
+    assert json.loads(preview)["value" if "value" in args else "v"] == "***"
+
+
+@pytest.mark.parametrize("scheme", ["https", "wss", "ftp"], ids=["https", "wss", "ftp"])
+def test_url_userinfo_is_redacted_before_consent_but_original_args_reach_rpc(fake_session, scheme):
+    _set_trust("srv", "untrusted")
+    endpoint = f"{scheme}://synthetic-user:synthetic_password@example.test:9443/nonsecret/path"
+    args = {"endpoint": endpoint}
+    previews = (
+        _mcp_handlers._format_trust_gate_arguments(args),
+        _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args),
+    )
+    assert all(preview is not None for preview in previews)
+    assert all("synthetic_password" not in preview for preview in previews)
+    assert all("example.test:9443/nonsecret/path" in preview for preview in previews)
+
+    with patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    assert "error" not in json.loads(raw)
+    consent.assert_called_once()
+    message = consent.call_args.args[0]
+    assert "synthetic_password" not in message
+    assert "example.test:9443/nonsecret/path" in message
+    fake_session.call_tool.assert_awaited_once()
+    assert fake_session.call_tool.call_args.kwargs["arguments"] == args
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"name": "Cookie", "payload": {"session": "synthetic_cookie"}},
+        {"name": "Authorization", "data": {"token": "synthetic_authorization"}},
+        {"name": "X-Auth-Token", "content": {"value": "synthetic_token"}},
+        {"headers": [{"name": "Cookie", "payload": {"session": "synthetic_nested_cookie"}}]},
+        {"headers": [{"name": "Authorization", "body": {"token": "synthetic_nested_auth"}}]},
+    ],
+    ids=["cookie-payload-dict", "authorization-data-dict", "token-content-dict",
+         "nested-cookie-payload-dict", "nested-authorization-body-dict"],
+)
+def test_ambiguous_credential_mappings_deny_before_consent_rpc_and_cost(fake_session, args):
+    from tools import mcp_tool_costs
+
+    _set_trust("srv", "untrusted")
+    policy = mcp_tool_costs.parse_cost_policy({"write_file": 40}, 100, None, where="test MCP server")
+    assert _mcp_handlers._format_trust_gate_arguments(args) is None
+    assert _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args) is None
+    with patch.dict(mcp_tool._server_cost_policies, {"srv": policy}, clear=True), \
+         patch.dict(mcp_tool_costs._spent, {}, clear=True), \
+         patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    consent.assert_not_called()
+    fake_session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert "synthetic_" not in raw
+    assert "error" in json.loads(raw)
 
 
 def test_credential_header_sibling_shapes_mask_opaque_values():

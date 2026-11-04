@@ -617,13 +617,14 @@ def _looks_like_header_name(value: Any) -> bool:
         return False
     compact = _compact_secret_name(value)
     parts = _secret_name_parts(value)
+    part_set = set(parts)
     return (
         compact in {"auth", "oauth", "authorization", "authorisation", "cookie", "setcookie"}
         or "authorization" in compact
         or "authorisation" in compact
         or compact.endswith(("apikey", "token", "secret", "password", "passwd", "credential", "credentials", "key", "keyid"))
         or compact.endswith("auth")
-        or bool(set(parts) & {"auth", "authentication", "authorization", "authorisation", "cookie"})
+        or bool(part_set & {"auth", "authentication", "authorization", "authorisation", "cookie"})
     )
 
 
@@ -654,7 +655,7 @@ def _mask_secret_scalar(value: Any, budget: _TrustGatePreviewBudget) -> Any:
 
     if isinstance(value, str):
         _reject_unstructured_secret_headers(value)
-        redacted = redact_sensitive_text(value, force=True)
+        redacted = redact_sensitive_text(value, force=True, redact_url_credentials=True)
         if not isinstance(redacted, str):
             raise ValueError("preview redaction failed")
         if not budget.account(len(redacted)):
@@ -701,7 +702,7 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
                 for key, item in value.items()
             )
             ambiguous_header_values_are_credential_data = any(
-                _compact_secret_name(name) not in {"auth", "oauth"} for name in header_names
+                _compact_secret_name(name) not in {"auth", "oauth", "authcheck"} for name in header_names
             )
             result = {}
             for key, item in value.items():
@@ -726,8 +727,9 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
                 )
                 if (
                     header_is_secret
+                    and ambiguous_header_values_are_credential_data
                     and _compact_secret_name(key) in _AMBIGUOUS_HEADER_VALUE_ALIASES
-                    and isinstance(item, (list, tuple))
+                    and isinstance(item, (dict, list, tuple))
                 ):
                     raise ValueError("ambiguous credential sequence")
                 masked_item = _mask_secret_argument_fields(
