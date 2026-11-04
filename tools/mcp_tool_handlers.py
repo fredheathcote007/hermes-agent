@@ -399,12 +399,30 @@ def _header_name_before_colon(text: str, colon_index: int) -> Optional[str]:
 
 def _header_candidate_is_uri_or_path(text: str, colon_index: int, candidate: str) -> bool:
     """Avoid treating a host, registry path, or URL port as a header name."""
-    prefix = text[:colon_index]
-    scheme_start = prefix.rfind("://")
-    if scheme_start >= 0:
-        scheme = prefix[:scheme_start].rsplit(None, 1)[-1]
-        if scheme and all(char.isalnum() or char in "+-." for char in scheme):
-            return True
+    url_match = re.search(
+        r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://",
+        text[:colon_index],
+    )
+    if url_match:
+        authority_start = url_match.end()
+        authority_end = len(text)
+        for delimiter in "/?#":
+            delimiter_index = text.find(delimiter, authority_start)
+            if delimiter_index >= 0:
+                authority_end = min(authority_end, delimiter_index)
+        if colon_index < authority_end:
+            authority = text[authority_start:authority_end].rsplit("@", 1)[-1]
+            relative_colon = colon_index - authority_start
+            if authority.startswith("["):
+                closing_bracket = authority.find("]")
+                if closing_bracket >= 0 and relative_colon <= closing_bracket:
+                    return True
+            port = authority[relative_colon + 1:]
+            if port.isdigit() and relative_colon > 0:
+                return True
+        # Once a URL has left its authority, punctuation-attached text is not
+        # protected by the URL recognizer and must still be scanned for headers.
+        return False
     if "/" not in candidate or any(char.isspace() for char in candidate):
         return False
     first_component = candidate.split("/", 1)[0].strip("\"'`\\")
@@ -605,22 +623,37 @@ def _looks_like_header_name(value: Any) -> bool:
         or "authorisation" in compact
         or compact.endswith(("apikey", "token", "secret", "password", "passwd", "credential", "credentials", "key", "keyid"))
         or compact.endswith("auth")
-        or "-" in value and bool(set(parts) & {"auth", "authorization", "authorisation", "cookie"})
+        or any(separator in value for separator in "-_")
+        and bool(set(parts) & {"auth", "authorization", "authorisation", "cookie"})
     )
 
 
-def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
-                                 _header_context: bool = False) -> Any:
-    """Redact structured values recursively, with bounded traversal and no object reprs."""
+def _flat_header_credential_value_indices(value: list | tuple, *, header_context: bool) -> set[int]:
+    """Return safely aligned credential values in a flat header sequence."""
+    secret_name_indices = [
+        index for index in range(len(value))
+        if not (index % 2 and _is_secret_argument_name(value[index - 1]))
+        for item in (value[index],)
+        if isinstance(item, str)
+        and _is_secret_argument_name(item)
+        and (header_context or _looks_like_header_name(item))
+    ]
+    if not secret_name_indices:
+        return set()
+    if any(index % 2 for index in secret_name_indices):
+        raise ValueError("ambiguous header sequence")
+    if any(not isinstance(value[index], str) for index in range(0, len(value), 2)):
+        raise ValueError("ambiguous header sequence")
+    if any(index + 1 >= len(value) for index in secret_name_indices):
+        raise ValueError("ambiguous header sequence")
+    return {index + 1 for index in secret_name_indices}
+
+
+def _mask_secret_scalar(value: Any, budget: _TrustGatePreviewBudget) -> Any:
+    """Redact and account for scalar values in an approval preview."""
     from agent.redact import redact_sensitive_text
 
-    budget = _budget or _TrustGatePreviewBudget()
-    budget.visit(value, _depth)
     if isinstance(value, str):
-        # This is deliberately before control escaping and the preview size check. The central
-        # redactor can therefore see token characters separated by controls or other formatting.
-        # Reject credential-like headers embedded in free text. Quote/folding
-        # parsing would risk partial masking and accidental operator disclosure.
         _reject_unstructured_secret_headers(value)
         redacted = redact_sensitive_text(value, force=True)
         if not isinstance(redacted, str):
@@ -638,6 +671,16 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
         if not budget.account(16):
             raise ValueError("preview serialization budget")
         return value
+    raise ValueError("unsupported preview value")
+
+
+def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
+                                 _header_context: bool = False) -> Any:
+    """Redact structured values recursively, with bounded traversal and no object reprs."""
+    budget = _budget or _TrustGatePreviewBudget()
+    budget.visit(value, _depth)
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return _mask_secret_scalar(value, budget)
     if isinstance(value, dict):
         identity = id(value)
         if identity in budget.active_ids:
@@ -682,6 +725,12 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
                         )
                     )
                 )
+                if (
+                    header_is_secret
+                    and _compact_secret_name(key) in _AMBIGUOUS_HEADER_VALUE_ALIASES
+                    and isinstance(item, (list, tuple))
+                ):
+                    raise ValueError("ambiguous credential sequence")
                 masked_item = _mask_secret_argument_fields(
                     item, _budget=budget, _depth=_depth + 1,
                     _header_context=_header_context or _is_header_collection_key(key),
@@ -701,12 +750,8 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
             raise ValueError("cyclic preview value")
         budget.active_ids.add(identity)
         try:
-            # HTTP header collections may be represented as [name, value, ...] arrays.
-            # Never expose a trailing element if the first names a credential.
-            credential_pair = (
-                len(value) >= 2 and isinstance(value[0], str)
-                and _is_secret_argument_name(value[0])
-                and (_header_context or _looks_like_header_name(value[0]))
+            credential_value_indices = _flat_header_credential_value_indices(
+                value, header_context=_header_context
             )
             result = []
             for index, item in enumerate(value):
@@ -714,7 +759,7 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
                     item, _budget=budget, _depth=_depth + 1,
                     _header_context=_header_context,
                 )
-                if credential_pair and index == 1 and item not in (None, ""):
+                if index in credential_value_indices and item not in (None, ""):
                     result.append("***")
                 else:
                     result.append(masked_item)
@@ -723,7 +768,7 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
             return result
         finally:
             budget.active_ids.remove(identity)
-    raise ValueError("unsupported preview value")
+    return _mask_secret_scalar(value, budget)
 
 
 def _escape_trust_gate_controls(text: str) -> str:
