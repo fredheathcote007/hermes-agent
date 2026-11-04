@@ -310,3 +310,33 @@ def test_mixed_case_header_pair_keys_mask_credentials(fake_session):
     ))
     assert '"value": "Alice"' in message
     fake_session.call_tool.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"name": "X-Authentication", "value": "synthetic_auth_material"},
+        ["X-Authentication", "synthetic_auth_material"],
+        {"httpHeaders": [{"name": "X-Authentication", "value": "synthetic_auth_material"}]},
+        {"XAuth": "synthetic_auth_material"},
+        {"XAuthData": "synthetic_auth_material"},
+        {"XAuthentication": "synthetic_auth_material"},
+    ],
+    ids=[
+        "named-pair",
+        "flat-pair",
+        "http-headers-pair",
+        "leading-acronym-auth",
+        "leading-acronym-auth-data",
+        "leading-acronym-authentication",
+    ],
+)
+def test_leading_acronym_auth_headers_are_masked_before_rpc(fake_session, args):
+    _set_trust("srv", "untrusted")
+    with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+        _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    consent.assert_called_once()
+    message = consent.call_args.args[0]
+    assert "synthetic_auth_material" not in message
+    fake_session.call_tool.assert_not_awaited()

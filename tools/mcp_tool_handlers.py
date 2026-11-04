@@ -243,7 +243,7 @@ def _secret_name_parts(key: str) -> tuple[str, ...]:
         if "\\" not in view:
             break
     view = "".join(char for char in view if not _is_secret_name_ignorable(char))
-    view = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", view)
+    view = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", view)
     parts = []
     current = []
     for char in view:
@@ -608,7 +608,7 @@ def _is_header_value_alias(key: Any) -> bool:
 def _is_header_collection_key(key: Any) -> bool:
     return _compact_secret_name(key) in {
         "header", "headers", "headerlist", "headerblock", "headercollection", "headerpairs",
-        "requestheaders", "extraheaders", "pairs",
+        "requestheaders", "extraheaders", "httpheaders", "pairs",
     }
 
 
@@ -623,8 +623,7 @@ def _looks_like_header_name(value: Any) -> bool:
         or "authorisation" in compact
         or compact.endswith(("apikey", "token", "secret", "password", "passwd", "credential", "credentials", "key", "keyid"))
         or compact.endswith("auth")
-        or any(separator in value for separator in "-_")
-        and bool(set(parts) & {"auth", "authorization", "authorisation", "cookie"})
+        or bool(set(parts) & {"auth", "authentication", "authorization", "authorisation", "cookie"})
     )
 
 
