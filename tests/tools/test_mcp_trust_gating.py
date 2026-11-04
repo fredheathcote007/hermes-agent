@@ -448,7 +448,11 @@ class TestTrustGateAtCallTime:
             ("Author", False),
             ("AUTHOR", False),
             ("authority", False),
-            ("authorisation", False),
+            ("authorisation", True),
+            ("Authorisation", True),
+            ("X-Authorisation", True),
+            ("Proxy-Authorisation", True),
+            ("authorisation_code", True),
             ("X-Request-Id", False),
             ("X-Author", False),
             ("X-Authority", False),
@@ -547,6 +551,117 @@ class TestTrustGateAtCallTime:
             assert secret not in message
         assert '"author": "Alice"' in message
         fake_session.call_tool.assert_not_awaited()
+
+    def test_mixed_case_header_pair_keys_mask_credentials(self, fake_session):
+        """Pascal, upper and mixed-case Name/Value aliases must not reveal secrets."""
+        _set_trust("srv", "untrusted")
+        args = {
+            "header_list": [
+                {"Name": "Authorization", "Value": "pascal-bearer-secret"},
+                {"NAME": "Cookie", "VALUE": "upper-cookie-secret"},
+                {"NaMe": "Authorisation", "vAlUe": "uk-auth-secret"},
+                {"header_name": "X-Auth-Data", "value": "header-name-secret"},
+                {"key": "X-Author", "value": "Alice"},
+            ]
+        }
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+        message = consent.call_args.args[0]
+        for secret in ("pascal-bearer-secret", "upper-cookie-secret",
+                       "uk-auth-secret", "header-name-secret"):
+            assert secret not in message
+        assert '"value": "Alice"' in message
+        fake_session.call_tool.assert_not_awaited()
+
+    def test_gateway_uk_authorisation_and_pascal_header_pairs_are_redacted(self):
+        for args in (
+            {"Authorisation": "uk-opaque", "target": "safe"},
+            {"headers": [{"Name": "Authorisation", "Value": "uk-pair-opaque"}]},
+            {"headers": [{"NAME": "Cookie", "VALUE": "cookie-pair-opaque"}]},
+        ):
+            command = _mcp_handlers._format_gateway_trust_gate_command("srv", "do", args)
+            assert command is not None
+            payload = json.loads(command.removeprefix("MCP untrusted call "))
+            assert payload["arguments"] != args
+            assert all(secret not in command for secret in
+                       ("uk-opaque", "uk-pair-opaque", "cookie-pair-opaque"))
+
+    def test_alternate_header_aliases_and_string_pairs_mask_credentials(self, fake_session):
+        """Common header representations must not bypass the same consent redaction."""
+        _set_trust("srv", "untrusted")
+        args = {
+            "headers": [
+                {"header_name": "Authorization", "header_value": "header-value-secret"},
+                {"HeaderKey": "Cookie", "FieldValue": "field-value-secret"},
+                {"KeyName": "Authorisation", "Val": "key-name-secret"},
+                ["Authorization", "array-pair-secret"],
+                ["X-Request-Id", "request-visible"],
+                "Authorisation: inline-header-secret",
+                "author: Alice",
+            ]
+        }
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+        message = consent.call_args.args[0]
+        for secret in ("header-value-secret", "field-value-secret", "key-name-secret",
+                       "array-pair-secret", "inline-header-secret"):
+            assert secret not in message
+        assert "request-visible" in message
+        assert "author: Alice" in message
+        fake_session.call_tool.assert_not_awaited()
+
+    def test_gateway_alternate_header_pair_repr_is_redacted(self):
+        for args in (
+            {"headers": [["Authorization", "array-opaque"]]},
+            {"header_name": "Authorization", "header_value": "map-opaque"},
+            {"headers": ["Authorisation: line-opaque"]},
+        ):
+            command = _mcp_handlers._format_gateway_trust_gate_command("srv", "do", args)
+            assert command is not None
+            for secret in ("array-opaque", "map-opaque", "line-opaque"):
+                assert secret not in command
+
+    def test_multiline_and_quoted_inline_headers_do_not_leak(self, fake_session):
+        _set_trust("srv", "untrusted")
+        args = {
+            "header_block": "Content-Type: application/json\r\nCookie: sid=cookie-opaque\n"
+                            "Host: example.test\nAuthorisation: uk-opaque",
+            "command": "curl -H 'Accept: text/plain' -H 'Cookie: curl-opaque' URL",
+        }
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+        message = consent.call_args.args[0]
+        for secret in ("cookie-opaque", "uk-opaque", "curl-opaque"):
+            assert secret not in message
+        assert "Content-Type: application/json" in message
+        assert "Host: example.test" in message
+        assert "Authorisation: ***" in message
+        assert "Cookie: ***" in message
+        fake_session.call_tool.assert_not_awaited()
+
+    def test_unrelated_apostrophe_does_not_shorten_cookie_mask(self, fake_session):
+        _set_trust("srv", "untrusted")
+        args = {"block": "don't\nCookie: sid=abc'def-tail\nHost: example.test"}
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+        message = consent.call_args.args[0]
+        assert "sid=abc" not in message
+        assert "def-tail" not in message
+        assert "Cookie: ***" in message
+        assert "Host: example.test" in message
+        fake_session.call_tool.assert_not_awaited()
+
+    def test_gateway_multiline_header_block_is_redacted(self):
+        args = {"block": "Host: ex\nAuthorisation: inline-opaque"}
+        command = _mcp_handlers._format_gateway_trust_gate_command("srv", "do", args)
+        assert command is not None
+        payload = json.loads(command.removeprefix("MCP untrusted call "))
+        assert "inline-opaque" not in command
+        assert "Authorisation: ***" in payload["arguments"]["block"]
 
     def test_oversized_preview_denies_before_consent_and_rpc(self, fake_session):
         """A hidden mutating argument cannot be approved behind a large benign prefix."""

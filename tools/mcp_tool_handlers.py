@@ -109,7 +109,10 @@ def _is_secret_argument_name(key: Any) -> bool:
     is_auth_header = (
         # Composite authorization fields (for example authorization_code or
         # X-Authorization-Data) are credentials even though they include "author".
+        # Include the UK header spelling too; ordinary author/authority fields
+        # remain descriptive, but authorisation is credential-bearing by default.
         "authorization" in compact
+        or "authorisation" in compact
         or compact == "oauth"
         or ("auth" in compact and "author" not in compact)
     )
@@ -129,6 +132,35 @@ def _is_secret_argument_name(key: Any) -> bool:
     )
 
 
+def _redact_inline_secret_headers(text: str) -> str:
+    """Mask opaque values in multiline or quoted HTTP header text."""
+    import re
+
+    pattern = re.compile(r"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{1,64})[ \t]*:[ \t]*")
+    rendered = []
+    cursor = 0
+    for match in pattern.finditer(text):
+        if match.start() < cursor or not _is_secret_argument_name(match.group(1)):
+            continue
+        end = len(text)
+        for delimiter in ("\r", "\n"):
+            index = text.find(delimiter, match.end())
+            if index >= 0:
+                end = min(end, index)
+        # Only an immediately preceding quote can delimit a curl-style header.
+        # An unrelated apostrophe elsewhere must never shorten the masked value.
+        if match.start() > 0 and text[match.start() - 1] in ("'", '"'):
+            index = text.find(text[match.start() - 1], match.end())
+            if index >= 0:
+                end = min(end, index)
+        if not text[match.end():end].strip():
+            continue
+        rendered.extend((text[cursor:match.end()], "***"))
+        cursor = end
+    rendered.append(text[cursor:])
+    return "".join(rendered)
+
+
 def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -> Any:
     """Redact structured values recursively, with bounded traversal and no object reprs."""
     from agent.redact import redact_sensitive_text
@@ -138,7 +170,10 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
     if isinstance(value, str):
         # This is deliberately before control escaping and the preview size check. The central
         # redactor can therefore see token characters separated by controls or other formatting.
-        redacted = redact_sensitive_text(value, force=True)
+        # Opaque credentials can also arrive inside multiline header blocks or
+        # curl-style quoted -H arguments, not just a single "Cookie: value" line.
+        redacted = _redact_inline_secret_headers(value)
+        redacted = redact_sensitive_text(redacted, force=True)
         if not isinstance(redacted, str):
             raise ValueError("preview redaction failed")
         if not budget.account(len(redacted)):
@@ -160,7 +195,17 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
             raise ValueError("cyclic preview value")
         budget.active_ids.add(identity)
         try:
-            header_name = value.get("name") if isinstance(value.get("name"), str) else None
+            # Header objects may use mixed-case Name/Value or key/value pairs.
+            # If several candidate labels are present, any credential-shaped label
+            # makes the associated value sensitive; no arbitrary first-key wins.
+            header_is_secret = any(
+                isinstance(key, str) and isinstance(item, str)
+                and "".join(char for char in key.casefold() if char.isalnum())
+                    in {"name", "key", "header", "headername", "headerkey",
+                        "fieldname", "keyname"}
+                and _is_secret_argument_name(item)
+                for key, item in value.items()
+            )
             result = {}
             for key, item in value.items():
                 if not isinstance(key, str) or len(key) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
@@ -168,7 +213,9 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
                 secret_field = _is_secret_argument_name(key)
                 # MCP transports commonly represent headers as {name: ..., value: ...}; the
                 # header name is attacker-controlled, so classify the value from that name too.
-                header_value = key.casefold() == "value" and _is_secret_argument_name(header_name)
+                compact_key = "".join(char for char in key.casefold() if char.isalnum())
+                header_value = (compact_key in {"value", "val", "v", "headervalue",
+                                               "fieldvalue"} and header_is_secret)
                 if secret_field and item not in (None, "") or header_value and item not in (None, ""):
                     result[key] = "***"
                 else:
@@ -184,9 +231,19 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0) -
             raise ValueError("cyclic preview value")
         budget.active_ids.add(identity)
         try:
+            # HTTP header collections may be represented as [name, value] pairs.
+            # Never expose the second element if the first names a credential.
+            credential_pair = (
+                len(value) == 2 and isinstance(value[0], str)
+                and _is_secret_argument_name(value[0])
+            )
             result = []
-            for item in value:
-                result.append(_mask_secret_argument_fields(item, _budget=budget, _depth=_depth + 1))
+            for index, item in enumerate(value):
+                if credential_pair and index == 1 and item not in (None, ""):
+                    result.append("***")
+                else:
+                    result.append(_mask_secret_argument_fields(
+                        item, _budget=budget, _depth=_depth + 1))
                 if not budget.account(2):
                     raise ValueError("preview serialization budget")
             return result
