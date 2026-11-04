@@ -300,6 +300,46 @@ class TestTrustGateAtCallTime:
                          '"target":"/production/database"', '"operation":"delete"'):
             assert fragment in rendered
 
+    def test_gateway_payload_preserves_escaped_invisible_and_non_bmp_arguments(
+        self, fake_session
+    ):
+        """The operator card is safe while its parsed payload retains exact argument identity."""
+        import unicodedata
+
+        args = {
+            "tag": "release\U000e0001\U000e0061",
+            "direction": "prod\u202e",
+            "line": "first\nsecond\r\x00",
+            "zero_width": "a\u200bb",
+        }
+        command = _mcp_handlers._format_gateway_trust_gate_command(
+            "srv\u202e", "tool\u200b", args
+        )
+
+        assert command is not None
+        payload = json.loads(command.removeprefix("MCP untrusted call "))
+        assert payload["server"] == "srv\u202e"
+        assert payload["tool"] == "tool\u200b"
+        assert payload["arguments"] == args
+        assert not any(unicodedata.category(char) in {"Cc", "Cf"} for char in command)
+        assert "\\udb40\\udc01" in command
+        assert "\\u202e" in command
+
+
+    def test_cli_preview_keeps_normal_unicode_and_round_trips_invisible_codepoints(self):
+        import unicodedata
+
+        args = {"text": "\u00e9" * 170, "emoji": "\U0001f642" * 70,
+                "tag": "\U000e0061", "direction": "\u202e"}
+        preview = _mcp_handlers._format_trust_gate_arguments(args, compact=False)
+
+        assert preview is not None
+        assert json.loads(preview) == args
+        assert "\u00e9" * 170 in preview
+        assert "\U0001f642" * 70 in preview
+        assert "\\udb40\\udc61" in preview
+        assert not any(unicodedata.category(c) == "Cf" for c in preview)
+
     def test_gateway_oversized_payload_denies_before_consent_and_rpc(self, fake_session):
         """A late mutating argument cannot hide beyond the gateway's 200-character command budget."""
         from gateway.session_context import clear_session_vars, set_session_vars
@@ -394,6 +434,14 @@ class TestTrustGateAtCallTime:
             ("OAuth", True),
             ("Proxy-Authorization", True),
             ("X-Authorization", True),
+            ("X-Authentication", True),
+            ("x-auth-data", True),
+            ("X-Auth-Token", True),
+            ("Proxy-Authentication", True),
+            ("X-Authorization-Data", True),
+            ("Authorization-Header", True),
+            ("Proxy-Authorization-Info", True),
+            ("authorization_code", True),
             ("Cookie", True),
             ("Set-Cookie", True),
             ("author", False),
@@ -402,6 +450,8 @@ class TestTrustGateAtCallTime:
             ("authority", False),
             ("authorisation", False),
             ("X-Request-Id", False),
+            ("X-Author", False),
+            ("X-Authority", False),
         ],
     )
     def test_secret_argument_classifier_table(self, key, is_secret):
@@ -415,6 +465,10 @@ class TestTrustGateAtCallTime:
             "headers": {
                 "Proxy-Authorization": "Basic proxy-opaque-secret",
                 "X-Authorization": "Bearer x-opaque-secret",
+                "X-Authentication": "x-authentication-secret",
+                "x-auth-data": "x-auth-data-secret",
+                "X-Auth-Token": "x-auth-token-secret",
+                "Proxy-Authentication": "proxy-authentication-secret",
                 "Cookie": "session=cookie-opaque-secret",
                 "Set-Cookie": "sid=set-cookie-opaque-secret; HttpOnly",
                 "X-Custom-Auth": "custom-opaque-secret",
@@ -423,6 +477,10 @@ class TestTrustGateAtCallTime:
             "header_list": [
                 {"name": "Proxy-Authorization", "value": "Basic pair-proxy-secret"},
                 {"name": "X-Authorization", "value": "Bearer pair-x-secret"},
+                {"name": "X-Authentication", "value": "pair-authentication-secret"},
+                {"name": "x-auth-data", "value": "pair-auth-data-secret"},
+                {"name": "X-Auth-Token", "value": "pair-auth-token-secret"},
+                {"name": "Proxy-Authentication", "value": "pair-proxy-authentication-secret"},
                 {"name": "Cookie", "value": "pair-cookie-secret"},
                 {"name": "Set-Cookie", "value": "pair-set-cookie-secret"},
                 {"name": "X-Request-Id", "value": "pair-visible"},
@@ -440,11 +498,19 @@ class TestTrustGateAtCallTime:
         for secret in (
             "proxy-opaque-secret",
             "x-opaque-secret",
+            "x-authentication-secret",
+            "x-auth-data-secret",
+            "x-auth-token-secret",
+            "proxy-authentication-secret",
             "cookie-opaque-secret",
             "set-cookie-opaque-secret",
             "custom-opaque-secret",
             "pair-proxy-secret",
             "pair-x-secret",
+            "pair-authentication-secret",
+            "pair-auth-data-secret",
+            "pair-auth-token-secret",
+            "pair-proxy-authentication-secret",
             "pair-cookie-secret",
             "pair-set-cookie-secret",
             "cookie-value-secret",
@@ -453,6 +519,33 @@ class TestTrustGateAtCallTime:
         assert '"X-Request-Id": "request-visible"' in message
         assert '"value": "pair-visible"' in message
         assert '"domain": "example.test"' in message
+        fake_session.call_tool.assert_not_awaited()
+
+    def test_authorization_variant_values_are_masked_in_structured_headers(self, fake_session):
+        _set_trust("srv", "untrusted")
+        args = {
+            "headers": {
+                "X-Authorization-Data": "x-authorization-data-secret",
+                "Authorization-Header": "authorization-header-secret",
+                "authorization_code": "authorization-code-secret",
+                "author": "Alice",
+            },
+            "header_list": [
+                {"name": "Authorization-Header", "value": "pair-authorization-header-secret"},
+            ],
+        }
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="decline") as consent:
+            _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+        message = consent.call_args.args[0]
+        for secret in (
+            "x-authorization-data-secret",
+            "authorization-header-secret",
+            "authorization-code-secret",
+            "pair-authorization-header-secret",
+        ):
+            assert secret not in message
+        assert '"author": "Alice"' in message
         fake_session.call_tool.assert_not_awaited()
 
     def test_oversized_preview_denies_before_consent_and_rpc(self, fake_session):

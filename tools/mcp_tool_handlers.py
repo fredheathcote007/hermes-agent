@@ -104,10 +104,14 @@ def _is_secret_argument_name(key: Any) -> bool:
         return False
     folded = key.casefold()
     compact = "".join(char for char in folded if char.isalnum())
+    # Match credential-bearing header variants (X-Authentication, X-Auth-Data,
+    # Proxy-Auth, etc.) without treating descriptive author fields as secrets.
     is_auth_header = (
-        compact.endswith("authorization")
-        or compact.endswith("auth")
+        # Composite authorization fields (for example authorization_code or
+        # X-Authorization-Data) are credentials even though they include "author".
+        "authorization" in compact
         or compact == "oauth"
+        or ("auth" in compact and "author" not in compact)
     )
     # Cookie headers and cookie-shaped fields carry opaque session material even when the
     # value does not resemble a credential to the text redactor. Keep descriptive cookie
@@ -196,7 +200,9 @@ def _escape_trust_gate_controls(text: str) -> str:
     import unicodedata
 
     return "".join(
-        f"\\u{ord(char):04x}"
+        # JSON encoding yields correct UTF-16 surrogate pairs for non-BMP Cf
+        # characters rather than ambiguous five/six-digit backslash-u escapes.
+        json.dumps(char, ensure_ascii=True)[1:-1]
         if char != "\n" and unicodedata.category(char) in ("Cc", "Cf")
         else char
         for char in text
@@ -214,7 +220,9 @@ def _format_trust_gate_arguments(args: Any, *, compact: bool = False) -> Optiona
     try:
         sanitized = _mask_secret_argument_fields(args)
         rendered = json.dumps(
-            sanitized, ensure_ascii=False, allow_nan=False,
+            # Gateway cards require ASCII-safe JSON. CLI/TUI may display Unicode
+            # directly to avoid rejecting legitimate long CJK/emoji arguments.
+            sanitized, ensure_ascii=compact, allow_nan=False,
             **({"separators": (",", ":")} if compact else {"indent": 2}),
         )
         rendered = _escape_trust_gate_controls(rendered)
@@ -280,10 +288,16 @@ def _format_gateway_trust_gate_command(server_name: str, tool_name: str, args: A
     if argument_preview is None:
         return None
     try:
-        payload = json.dumps(
-            {"server": server_name, "tool": tool_name, "arguments": json.loads(argument_preview)},
-            ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+        # Keep the bounded, redacted JSON fragment intact. Decoding it and dumping with
+        # ensure_ascii=False would reintroduce invisible characters and would misparse the
+        # six-digit escape emitted for non-BMP tag characters. Validate, but never substitute
+        # the parsed value back into the operator-visible payload.
+        json.loads(argument_preview)
+        identity = json.dumps(
+            {"server": server_name, "tool": tool_name},
+            ensure_ascii=True, separators=(",", ":"), allow_nan=False,
         )
+        payload = identity[:-1] + ",\"arguments\":" + argument_preview + "}"
         from tools.approval_prompt import prepare_gateway_approval_command
         prepared = prepare_gateway_approval_command(f"MCP untrusted call {payload}")
         from gateway.platforms.base_exec_approval import GATEWAY_APPROVAL_COMMAND_MAX_CHARS
