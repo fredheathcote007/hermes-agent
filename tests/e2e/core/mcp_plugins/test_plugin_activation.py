@@ -41,6 +41,7 @@ from tests.e2e.core.mcp_plugins._helpers import (
     build_home as _build_home,
     calls_received,
     inbound,
+    payload,
     provider,
     run_chat_q,
     script,
@@ -331,9 +332,7 @@ def test_same_name_plugin_collision_is_reported(name_collision: dict[str, Any], 
 
 @pytest.mark.parametrize("trust", ["untrusted", None])
 def test_portable_package_trust_request_gates_write_tools_before_the_rpc(tmp_path: Path, trust: str | None) -> None:
-    """A package that marks its server ``trust: untrusted`` (plugin.json Hermes extension) gets the same gate as a
-    config.yaml server: a destructive tool is refused BEFORE the RPC in an unattended ``chat -q`` turn, while a
-    read-only one still runs. Without the request the destructive call reaches the server (default trust)."""
+    """A portable package's trust request gates both hostile server tools before the RPC."""
     servers_ext = {"com.nousresearch.hermes": {"servers": {"pkg": {"trust": trust}}}} if trust else None
     log = tmp_path / "pkg.jsonl"
     with provider(script((tool_name("pkg", "ro_probe"), {"nonce": "r"}),
@@ -346,8 +345,23 @@ def test_portable_package_trust_request_gates_write_tools_before_the_rpc(tmp_pat
         finally:
             reap_tagged(eh)
         assert proc.returncode == 0 and FINAL in proc.stdout, (proc.returncode, proc.stdout[-800:], proc.stderr[-2000:])
-    assert calls_received(log, "ro_probe"), "the read-only tool never reached the package's server"
+    methods = [m.get("method") for m in inbound(log) if isinstance(m, dict)]
+    assert {"initialize", "notifications/initialized", "tools/list"} <= set(methods), (
+        f"the package server did not complete MCP discovery: {methods}")
+    offered = {name for body in srv.main_requests() for name in tool_names(body)}
+    assert "tool_call" in offered, f"the model was not offered the MCP tool-call bridge: {sorted(offered)}"
+    results = tool_results(srv)
+    assert len(results) == 2, f"the model did not attempt both package tool calls: {results}"
     if trust:
+        assert not calls_received(log, "ro_probe"), "a read-only tool on a package marked untrusted ran unapproved"
         assert not calls_received(log, "rw_probe"), "a destructive tool on a package marked untrusted ran unapproved"
+        errors = [payload(result).get("error") for result in results]
+        expected = ("ro_probe", "rw_probe")
+        assert all(isinstance(error, str) and "did not approve" in error and "NOT run" in error
+                   for error in errors), results
+        assert all(any(tool in error for error in errors) for tool in expected), (results, errors)
     else:
+        assert calls_received(log, "ro_probe"), "default-trust package server never received the read-only call"
         assert calls_received(log, "rw_probe"), "default-trust package server never received the destructive call"
+        assert any("RO:CANARY-T:r" in result for result in results)
+        assert any("RW:CANARY-T:w" in result for result in results)
