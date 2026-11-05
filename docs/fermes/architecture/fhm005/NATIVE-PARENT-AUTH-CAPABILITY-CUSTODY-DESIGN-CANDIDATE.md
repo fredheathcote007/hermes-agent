@@ -11,20 +11,26 @@ has been implemented or natively proven. All established security review and tes
 | Field | Value |
 | --- | --- |
 | Project / issue | `fermes-hermes` / [FHM-005 P0](https://github.com/fredheathcote007/hermes-agent/issues/5) |
-| PR / branch / baseline SHA | [PR #50](https://github.com/fredheathcote007/hermes-agent/pull/50) / `fermes/fhm005-dr02-native-security-20261027` / `ad54a8ca7c065910d75f9a5868cb859cf290a526` |
+| PR / branch / reviewed SHA | [PR #50](https://github.com/fredheathcote007/hermes-agent/pull/50) / `fermes/fhm005-dr02-native-security-20261027` / `3070553021996b825aa64f01f5f05e8aaf219fe8` |
 | Decisions | [DEC-004–009](../../memory/DECISIONS.md) |
 | Related design | [DR-02/DR-04 candidate](DR02-DR04-SECURITY-DESIGN-CANDIDATE.md), [ADR candidates](ADR-DR02-DR07-CANDIDATE.md), [detailed design](DETAILED-DESIGN-CANDIDATE.md), [validation plan](VALIDATION-PLAN.md) |
 | Scope | DR-02 parent/controller identity and capability custody, plus DR-04 protected store fencing; FHM-007 excluded |
 
-## PR #50 remaining Cursor High findings — candidate only
+## PR #50 Cursor High finding response — candidate only
 
-These two findings block security approval. The mechanisms and acceptance tests below are design
-requirements, not implementation evidence or permission to install or change host policy.
+The latest exact-head Cursor High finding is **“Writer fence is unsatisfiable.”** It is valid against
+the previous wording: the required positive proof could not be produced for an ordinary writable
+target using the mechanisms then authorized. This revision removes that positive path. Under current
+DEC-009, filesystem effects on ordinary user/worker-writable targets cannot produce automatic
+trusted success. The conditional new-object route below is a future owner-gated design option, not an
+approved mechanism or a claim that the finding is closed. Closure requires separate exact security
+approval and successful native evidence on both OSes. The earlier HMAC transcript finding is also a
+design specification only until its native proof and acceptance evidence exist.
 
 | Finding | Severity and gap | Candidate resolution | Required native positive and negative tests |
 | --- | --- | --- | --- |
 | Incomplete HMAC proof transcript | **High.** `Np2`, transcript encoding/order, OS-authenticated connection-instance binding, and the source of channel-binding bytes were unspecified, so the controller could not independently reconstruct the exact MAC input or reliably reject cross-connection, stale-generation, and replayed proofs. | Specify a versioned byte-exact transcript; controller creates/transmits `Nc2` and per-connection binding nonce; parent creates/transmits fresh `Np2`; both bind live OS-authenticated peer/service and endpoint instances plus both generations. Controller derives its transcript fields from its own pinned connection and service-manager evidence and compares exact input in constant time. No transport-exporter or undocumented OS API is assumed. If the native transport instance cannot be pinned and bound reliably, fail closed. | On Linux and Windows, positive fresh proof on one authorized connection; negative altered field/order/length, nonce reuse, replay on a second connection or endpoint, stale/changed service instance, generation mismatch, downgrade and reconnect tests. Verify controller recomputes byte-for-byte; no `K` in logs or persistent data. |
-| Same-inode writer race during independent readback | **High.** A target can be changed in place while the verifier reads it; pre/post inode/file ID equality and matching metadata do not prove that no write overlapped the read. | Require strong action-scoped writer quiescence before readback: contained writer process tree is terminated and proven empty, its write-capable handles are gone, and all other principals capable of writing the target are excluded by a reliable, already-authorized native fence for the whole read window. Metadata and digest checks only supplement this gate. Do not install broad ACLs, use a snapshot, or accept a trusted-worker copy. If writers cannot be excluded or quiescence cannot be established, result is `INCOMPLETE`/manual/external and no automatic replay. | On both native OSes, race in-place writes using the same inode/file ID during a pinned-handle read, including truncate/rewrite and write-then-restore; test open writer handles, delayed descendants and external writers. Each uncertain/overlapping case must fail closed. Positive success requires proven writer fence plus stable pinned readback. |
+| Same-inode writer race during independent readback | **High.** A target can be changed in place during readback, and current DEC-009 grants no native exclusion mechanism. Empty cgroup/Job state does not exclude same-user writers or prove that retained/dangling descriptors are closed. | V1 returns `INCOMPLETE`/manual/external for ordinary user- or worker-writable filesystem effects. A future conditional positive path may apply only to a newly created, per-attempt object kept under exclusive trusted-controller custody from creation through independently reopened readback; no untrusted worker ever receives a write-capable handle or access to the final object. Exact installation and narrow access grant require separate owner/security approval. Existing objects with possible prior writers are ineligible unless OS-proven closure is available; otherwise use a new object version or remain incomplete. | Linux and Windows native tests must prove the service-created object is inaccessible for writing by the worker and unrelated same-user process, has no untrusted writer handle by construction, survives close/reopen with the same pinned object identity and expected digest, and is durably bound to the attempt generation. Race attempts, inherited/duplicated handles, aliases/replacements, crashes and failed gates must deny or return `INCOMPLETE`. Tests do not themselves approve installation or prove the general absence of handles on existing targets. |
 
 DEC-009 records the owner’s limited in-principle approval. No particular SID/UID, group, path, service,
 permission or ACL change is approved. Native mechanism details and any future installation plan still
@@ -311,16 +317,19 @@ produce a security diagnostic without exposing challenge, capability, token, or 
 
 ### Parent intent and confused-deputy contract
 
-The parent service is an authority broker, not a generic authenticated proxy. **V1 is limited to
-policy-approved, non-mutating local artifact/readback verification** against a controller-created,
-immutable, pre-armed attempt and scope. The controller derives attempt identity, approved root/object
-set, expected artifacts, and policy ID from root-owned policy and protected state. The interactive
-caller cannot choose paths, commands, scripts, executable, environment, outputs, policy definitions,
-store paths, generation, attempt IDs, or a “verified” field; arbitrary caller input cannot mint an
-authoritative success. Trust binds to the protected policy plus controller-created attempt/scope and
-independent observation/readback, not to the identity of the interactive caller. Caller-provided
-intent is only an untrusted request to select an already armed eligible attempt; ambiguity, mismatch,
-or unsupported scope denies.
+The parent service is an authority broker, not a generic authenticated proxy. **V1 may consider only
+policy-approved, non-mutating verification** against a controller-created, immutable, pre-armed
+attempt and scope. Under current DEC-009, ordinary user/worker-writable filesystem targets remain
+manual/external and cannot produce automatic trusted success. The only candidate filesystem positive
+route is the conditional new-object-under-controller-custody design in the next section, which is
+not approved or implemented. The controller derives attempt identity, approved object set, expected
+artifacts, and policy ID from protected policy and state. The interactive caller cannot choose paths,
+commands, scripts, executable, environment, outputs, policy definitions, store paths, generation,
+attempt IDs, or a “verified” field; arbitrary caller input cannot mint an authoritative success.
+Trust binds to protected policy plus controller-created attempt/scope and independent
+observation/readback, not to the identity of the interactive caller. Caller-provided intent is only
+an untrusted request to select an already armed eligible attempt; ambiguity, mismatch, or unsupported
+scope denies.
 
 All mutation and external-effect intents, and all untrusted or ambiguous intent, remain unavailable
 for automatic trusted verification and require manual operator review or separately approved external
@@ -330,57 +339,86 @@ requires a separately protected broker-origin instance identity with owner revie
 independently reviewed proof; absent that proof, fail closed. Service authentication does not
 authorize arbitrary user intent. Explicit owner approval of this v1 effect taxonomy is still pending.
 
-## Readback target access boundary
+## Readback target access boundary and writer-fence decision
 
-The verifier's service identity must not be assumed to read the interactive user's home or project
-tree. Candidate readback is limited to explicit, owner-authorized target roots or objects derived
-from controller-owned policy and the pre-armed attempt. DEC-009 approves this direction in
-principle only. The verifier may receive only read and directory-traversal rights required for those
-roots; no recursive grant over the user profile, general project-root access, or worker-selected root
-is permitted. No specific ACL, path, principal or permission change is approved; each concrete grant
-requires the established security review and later implementation/install approval.
+DEC-009 allows continued design of restricted worker identities and narrowly scoped read-only
+verifier access. It approves no concrete identity, target, ACL, permission change, installation, or
+trusted-success transition. The verifier is not assumed to read the interactive user's home or
+project tree. A worker-selected path, ordinary existing user-owned path, or path with any ordinary
+user/worker write authority is never eligible for automatic trusted success in v1 under current
+approval.
 
-Before opening the readback window, controller must establish a strong, action-scoped writer fence:
-(1) every process started for the attempt is contained in the approved native process-tree boundary;
-(2) the worker and all descendants are terminated, process objects confirm exit, and the cgroup/Job
-Object or equivalent containment is empty; (3) no contained process retains a write-capable target
-handle; and (4) every other principal with effective write authority to the target is excluded for
-the entire read window by a reliable, natively validated fence already permitted by policy. If that
-exclusion cannot be proven, the target is externally writable and cannot produce automatic success.
-On Linux this requires a service-owned cgroup boundary whose membership/emptiness and process
-termination are checked after closing admission to new descendants; process groups alone are
-insufficient. On Windows it requires assignment before worker code runs to a Job Object configured
-to deny breakaway and terminate on close, followed by confirmed zero active processes. Job membership
-does not prove closure of duplicated or otherwise retained file handles, and a Job Object does not
-exclude unrelated principals with write access; handle ownership and those external writers need
-independent proof. Where the OS cannot prove those properties, there is no automatic success.
-The fence must prevent late descendants,
-background writers, inherited handles and concurrent external writers; checking that a root process
-exited is insufficient. Do not treat advisory locks, timestamps, stable inode/file ID, or
-pre/post-equal digests as proof of exclusive writer quiescence. The design does not prescribe an
-unapproved permission change to create a fence. If the host cannot prove the fence without one, the
-result is `INCOMPLETE`/manual or separately approved external attestation, with no automatic replay.
+| V1 target class | V1 result | Reason / gate |
+| --- | --- | --- |
+| Ordinary existing user-owned or worker-writable path, including a file the worker may have opened earlier | `INCOMPLETE` / manual operator or separately approved external attestation | No automatic success. Permissions changed after the fact do not revoke already-open Linux descriptors or Windows handles. Empty cgroup/Job, process enumeration, timestamps, stable file IDs, locks and equal pre/post digests do not establish exclusion. |
+| External mutable, remote, user-mounted, or otherwise uncontrolled target | `INCOMPLETE` / manual or separately approved external attestation | No local fence proven for the entire effect/readback interval. |
+| Source-only or foreground-process tests without an independently protected final object | `INCOMPLETE` / manual or external | Tests, worker claims, and worker-supplied copies alone are not authoritative readback. |
+| New per-attempt object held by an independently protected controller from creation; no worker or ordinary user ever receives final-object write access/handle | **Conditionally eligible only after separate exact owner/security approval and both native qualification lanes pass. Not approved or implemented by DEC-009.** | Must satisfy the per-OS positive transition below, the artifact's acceptance contract, durable generation binding, and all other FHM-005 gates. Otherwise `INCOMPLETE`. |
 
-Acceptance matrix on both operating systems: positive success only with exclusive contained-writer
-quiescence established before pinned readback; negative same-inode/file-ID concurrent write during
-read, truncate/rewrite, write-then-restore, held or duplicated write-capable handle, descendant
-created before containment closes admission, delayed descendant, Job breakaway/assignment failure,
-cgroup/Job still populated, and unrelated external writer. Each negative case must produce
-`INCOMPLETE`/manual, no successful receipt and no automatic replay; inability to observe a race or
-prove exclusion is itself a failure. Tests must include races triggered during the actual read and
-not rely solely on post-read metadata checks.
+### Conditional positive transition: new object under exclusive controller custody
 
-After the fence, verifier reads the actual target in place through pinned directory/object handles,
-strict containment beneath the allowlisted root, and no-follow/reparse-point rejection at every
-component. It records native object identity, size, digest and available timestamps immediately before
-and after the bounded read as supplementary race detection, and requires stable identity and
-content. This read is not a substitute for writer exclusion: same-inode writes during the read,
-including write-then-restore, invalidate automatic success even if final metadata/digest match. No
-snapshot, trusted-worker copy, caller path, or received descriptor is evidence. Readback remains
-read-only and bounded to controller-derived artifacts. Native Linux and Windows tests must force
-same-inode writes during pinned reads, truncate/rewrite, write-then-restore, held writer handles,
-delayed descendants, and uncontrolled external writers. Any overlap, uncertainty, or inability to
-prove exclusion is `INCOMPLETE`/manual/external; no successful receipt and no automatic replay.
+This is a bounded future option, not an approved decision to build a broker or service extension.
+It avoids trying to infer or revoke every handle to an existing file: the final object is new, has
+no pre-existing writers, and is never opened for writing by a worker or ordinary user. A worker may
+provide untrusted input, but that input is not proof. A separately approved trusted controller must
+create the final per-attempt object under its protected storage root, apply the acceptance contract,
+write only through its own non-inheritable handle, durably flush and close that handle, then reopen
+the same object independently read-only through a pinned directory/object handle and verify object
+identity, attempt/generation binding, bounded content and expected digest. Any mismatch, alias,
+unexpected writer access, uncertain durability, or inability to prove exclusive custody yields
+`INCOMPLETE`; no receipt is issued. No existing user target is reclassified as trusted by copying it
+or by changing its permissions after a worker has run.
+
+The candidate native transitions are:
+
+* **Linux:** only after exact owner/security approval provisions the distinct service identity and
+  narrowly scoped protected storage, verifier creates a unique object relative to its pinned,
+  service-owned directory using exclusive create and no-follow semantics (`openat2`/`openat` with
+  the qualified resolution constraints, `O_CREAT|O_EXCL|O_NOFOLLOW`, restrictive mode). The worker
+  has no directory traversal/write access and is never passed the final object's descriptor. The
+  controller writes using a non-inheritable descriptor, `fsync`s the file and containing directory
+  as required by the qualified filesystem, closes the write descriptor, independently reopens
+  read-only, revalidates device/inode and attempt generation, and hashes the bounded object. The
+  service identity, directory grant, filesystem semantics and generation anchor are installation
+  decisions requiring separate approval; a non-root process changing permissions on an unrelated
+  user-owned target is not a fence.
+* **Windows:** only after exact owner/security approval provisions the distinct service identity and
+  protected storage DACL, verifier creates a unique object with `CREATE_NEW` and a protected security
+  descriptor that excludes the worker and ordinary user. No worker receives an object handle; all
+  handles are non-inheritable and the final object is never opened for worker write. Controller
+  flushes and closes its write handle, independently reopens read-only by a pinned directory/object
+  handle, verifies volume/file ID and generation, then hashes bounded contents. DACL changes are
+  not treated as revoking access through an already-open handle; the new-object/no-untrusted-handle
+  invariant is mandatory. Exact service SID, DACL, installation, filesystem and durable-generation
+  choices require separate approval.
+
+On both systems, the native acceptance test must verify denial of create/open/write through every
+allowed path for the worker and an unrelated process running as the interactive user; verify that
+no final-object descriptor/handle is inherited, duplicated, or passed to them; attempt rename,
+replacement, hard-link/reparse/path alias, truncate/rewrite, delayed writes and same-object mutation
+during the independent read; and inject crashes around flush, close, reopen and generation commits.
+The trusted controller must re-open and read the actual protected final object independently; a
+worker copy, digest, report or claimed close is never sufficient. Exact object identity and content
+must match the controller-derived attempt and acceptance contract. Any failed or unobservable check
+is `INCOMPLETE`/manual/external. These tests establish only the tested native configuration; they do
+not grant installation or ACL authority.
+
+For an existing object where a future separately approved native policy proposes permission
+revocation or ownership transfer, no positive result is permitted unless that OS demonstrates a
+reliable operation that excludes every pre-existing writer, including retained/dangling descriptors,
+for the entire read window. Linux mode/ACL changes do not invalidate already-open file descriptors;
+Windows DACL changes do not revoke access granted to already-open handles. This candidate specifies
+no such universal revocation primitive, handle enumeration proof, or process scan. Where proven
+closure is unavailable, the only possible conditional route is a fresh object version created and
+kept under exclusive trusted-controller custody as above; otherwise remain `INCOMPLETE`.
+
+**Required negative matrix (Linux and Windows):** same-object write during the pinned read,
+truncate/rewrite, write-then-restore, attempted retained/duplicated/inherited handle, late descendant,
+unrelated same-user writer, external writer, path/object replacement, service restart, generation
+mismatch, failed sync, and any inability to observe the native state. Every case must deny the
+positive transition or yield `INCOMPLETE`/manual/external, with no successful receipt and no
+automatic replay. Empty cgroup or Job membership is necessary for worker lifecycle handling but is
+never sufficient for the filesystem writer fence.
 
 ## 5. DR-04 durable receipt custody and restart fencing
 
@@ -480,7 +518,7 @@ bounded artifacts; skipped, simulated, emulated, timed out, or unobservable mean
 | Protocol | Wrong UID/PID/cgroup, nonce reuse, changed channel, stale generation, downgrade, unknown field, frame over 16 KiB, missing FD policy | Wrong token/SID/logon/integrity, failed impersonation/revert, pipe replacement, remote client, duplicate nonce, handle inheritance, downgrade | Typed reject/unavailable; never success |
 | Capability custody | Inspect raw `K` only in parent/controller protected volatile memory, dump/swap controls, inherited/passable FDs and worker access; test expiry and restart/replay | Inspect raw `K` only in parent/controller protected volatile memory, dump/debug behavior, handles and worker token; test expiry and restart/replay | No persistent verifier/key artifact; only live in-session proof succeeds; old/expired `K` rejected |
 | Store durability | No-follow/root ownership, DB/WAL/SHM/backup ACL, symlink/hardlink/mount/rename races, crash at every commit boundary, backup restore/rollback, CAS race | No-reparse/ACL, DB/WAL/SHM, junction/alternate path races, service crash/reboot, backup restore/rollback, CAS race | Fenced generation, exactly-once consume or sticky unknown; no auto-replay |
-| Artifact/effect boundary | Read only allowlisted actual target through pinned no-follow handles; replace root/artifact during check, hardlink or mount substitution, same-inode write during pinned read, truncate/rewrite, write-then-restore, delayed/escaped descendant, external writer, unlisted path | Read only allowlisted actual target through pinned non-reparse handles; junction/reparse/file-ID/case/volume substitution, same-file-ID write during pinned read, truncate/rewrite, write-then-restore, delayed/escaped descendant, external writer, unlisted path | Success only after proven process-tree and external-writer fence plus pinned stable readback; any same-inode race or unproven writer is `INCOMPLETE`/manual, never success |
+| Artifact/effect boundary | Existing user/worker-writable paths are manual; conditionally test a fresh controller-created object in protected storage, no worker descriptor, independent reopen/readback, same-inode and alias races, crash/generation faults | Existing user/worker-writable paths are manual; conditionally test a fresh controller-created object under protected DACL, no worker handle, independent reopen/readback, file-ID/reparse/alias races, crash/generation faults | Current DEC-009 yields no filesystem auto-success. Conditional eligibility requires exact separate owner/security approval, new object with no untrusted writer capability from creation, independent readback and durable attempt-generation binding; otherwise `INCOMPLETE`/manual/external. Empty cgroup/Job and worker copies are never sufficient. |
 | Teardown / rollback | Stop candidate process, fence generation, revoke K, preserve unresolved attempts, verify no orphan; restore prior nontrusted behavior | Stop services, revoke K, preserve unresolved attempts, remove candidate test state only, verify no orphan; restore prior nontrusted behavior | No receipt survives rollback as current; no uncertain action replay |
 
 Independent security approval is a gate before any privileged implementation. Further non-negotiable
@@ -508,8 +546,9 @@ or prevent a confused deputy.
 
 The independent PR50 challenger identified two P1 design gaps. **Intent authorization:** addressed in
 this candidate by limiting v1 to controller-created immutable attempts and policy-approved
-non-mutating local readback, while explicitly leaving same-user legitimate-Hermes attribution for
-high-impact intent unavailable without separately protected, owner-reviewed instance proof.
+non-mutating verification, while explicitly leaving same-user legitimate-Hermes attribution for
+high-impact intent unavailable without separately protected, owner-reviewed instance proof. This
+does not make ordinary user/worker-writable filesystem readback eligible for automatic success.
 **Rollback anchor:** addressed as a proposed nonroot verifier-UID single-writer anchor separate from
 the database, with explicit ownership, sync ordering, mismatch/crash detection, manual recovery, and
 the undetectable consistent full-machine restore boundary. These are design remediations only; neither
@@ -525,9 +564,13 @@ DEC-009 records in-principle approval of the distinct restricted worker principa
 scoped read-only verifier access direction. It does not approve an identity, launch authority, path,
 service, ACL/permission change, risk acceptance, implementation or installation. Concrete native
 controls and any required permission changes remain subject to security review and later explicit
-owner approval. The two remaining High findings are the proof-transcript and writer-quiescence gaps
-addressed in this candidate; until natively demonstrated on both operating systems, trusted
-verification remains unavailable/manual.
+owner approval. **Cursor closure note:** the unsatisfiable positive writer-fence claim is removed for
+v1: ordinary writable targets now always remain `INCOMPLETE`/manual/external. The new-object route is
+only a concrete, testable owner-gated option; this document does not claim the High finding closed,
+because no exact permission/install plan is approved and no native Linux or Windows proof has been
+run. The HMAC transcript likewise remains unproven until native evidence exists. No trusted
+filesystem success, implementation, installation, merge, or deployment is authorized by this
+candidate.
 
 ## 10. Approval questions / challenge points
 
