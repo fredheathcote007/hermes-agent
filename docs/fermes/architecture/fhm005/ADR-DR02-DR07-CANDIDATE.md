@@ -26,6 +26,8 @@ to manual operator or external attestation when verification is unavailable.
 
 Detailed DR-02/DR-04 security mechanism, same-user attack analysis, receipt lifecycle, native proof obligations, and owner questions: [security design candidate](DR02-DR04-SECURITY-DESIGN-CANDIDATE.md). It remains unapproved and unproven.
 
+Concrete per-OS parent authentication, capability custody, handshake, and native hostile-test candidate: [native parent authentication and capability custody](NATIVE-PARENT-AUTH-CAPABILITY-CUSTODY-DESIGN-CANDIDATE.md). This is a separate, unapproved security design proposal; no service provisioning or privileged implementation is authorized by it.
+
 ## DR-02 — Explicit trust/execution model
 
 **Approval:** DEC-007/008 establish controller/parent/worker separation and approve the paired
