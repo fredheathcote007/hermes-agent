@@ -18,19 +18,18 @@ has been implemented or natively proven. All established security review and tes
 
 ## PR #50 Cursor High finding response — candidate only
 
-The latest exact-head Cursor High finding is **“Writer fence is unsatisfiable.”** It is valid against
-the previous wording: the required positive proof could not be produced for an ordinary writable
-target using the mechanisms then authorized. This revision removes that positive path. Under current
-DEC-009, filesystem effects on ordinary user/worker-writable targets cannot produce automatic
-trusted success. The conditional new-object route below is a future owner-gated design option, not an
-approved mechanism or a claim that the finding is closed. Closure requires separate exact security
-approval and successful native evidence on both OSes. The earlier HMAC transcript finding is also a
-design specification only until its native proof and acceptance evidence exist.
+The exact-head Cursor High finding is **“Controller write path is self-attesting.”** A controller
+that creates or writes a delegated target and then reopens or hashes it attests only to its own
+effect, not the worker's. Under current DEC-009, no local filesystem effect can produce trusted
+success; all such effects remain `INCOMPLETE`/manual or require separately approved external
+authoritative provider attestation. Any future independent local verification requires a separate
+architecture/ADR and owner approval, and is not an available route now. The earlier HMAC transcript
+finding remains a design specification only until its native proof and acceptance evidence exist.
 
 | Finding | Severity and gap | Candidate resolution | Required native positive and negative tests |
 | --- | --- | --- | --- |
 | Incomplete HMAC proof transcript | **High.** `Np2`, transcript encoding/order, OS-authenticated connection-instance binding, and the source of channel-binding bytes were unspecified, so the controller could not independently reconstruct the exact MAC input or reliably reject cross-connection, stale-generation, and replayed proofs. | Specify a versioned byte-exact transcript; controller creates/transmits `Nc2` and per-connection binding nonce; parent creates/transmits fresh `Np2`; both bind live OS-authenticated peer/service and endpoint instances plus both generations. Controller derives its transcript fields from its own pinned connection and service-manager evidence and compares exact input in constant time. No transport-exporter or undocumented OS API is assumed. If the native transport instance cannot be pinned and bound reliably, fail closed. | On Linux and Windows, positive fresh proof on one authorized connection; negative altered field/order/length, nonce reuse, replay on a second connection or endpoint, stale/changed service instance, generation mismatch, downgrade and reconnect tests. Verify controller recomputes byte-for-byte; no `K` in logs or persistent data. |
-| Same-inode writer race during independent readback | **High.** A target can be changed in place during readback, and current DEC-009 grants no native exclusion mechanism. Empty cgroup/Job state does not exclude same-user writers or prove that retained/dangling descriptors are closed. | V1 returns `INCOMPLETE`/manual/external for ordinary user- or worker-writable filesystem effects. A future conditional positive path may apply only to a newly created, per-attempt object kept under exclusive trusted-controller custody from creation through independently reopened readback; no untrusted worker ever receives a write-capable handle or access to the final object. Exact installation and narrow access grant require separate owner/security approval. Existing objects with possible prior writers are ineligible unless OS-proven closure is available; otherwise use a new object version or remain incomplete. | Linux and Windows native tests must prove the service-created object is inaccessible for writing by the worker and unrelated same-user process, has no untrusted writer handle by construction, survives close/reopen with the same pinned object identity and expected digest, and is durably bound to the attempt generation. Race attempts, inherited/duplicated handles, aliases/replacements, crashes and failed gates must deny or return `INCOMPLETE`. Tests do not themselves approve installation or prove the general absence of handles on existing targets. |
+| Controller write path is self-attesting | **High.** A controller/verifier that creates or writes a delegated target and then reopens or hashes it attests only to its own effect; that readback does not prove a worker effect. Current DEC-009 grants no independent local fence, executor, or readback positive authority. | Every local filesystem effect from an untrusted worker or ordinary user-owned/writable path remains `INCOMPLETE`/manual or requires separately approved external authoritative provider attestation. This includes newly created untrusted objects, snapshots, and controller copies of worker output. The verifier is an observer only and never performs or mediates the effect it certifies. No local filesystem positive route is available under current approval. | No controller-created/write/readback route can qualify. Any future independent local verification requires a separate architecture/ADR and owner approval for a distinct effect executor, protected immutable effect target, OS-enforced writer exclusion including preexisting handles, native Linux and Windows hostile qualification, and exact effect acceptance. |
 
 DEC-009 records the owner’s limited in-principle approval. No particular SID/UID, group, path, service,
 permission or ACL change is approved. Native mechanism details and any future installation plan still
@@ -318,16 +317,16 @@ produce a security diagnostic without exposing challenge, capability, token, or 
 ### Parent intent and confused-deputy contract
 
 The parent service is an authority broker, not a generic authenticated proxy. **V1 may consider only
-policy-approved, non-mutating verification** against a controller-created, immutable, pre-armed
-attempt and scope. Under current DEC-009, ordinary user/worker-writable filesystem targets remain
-manual/external and cannot produce automatic trusted success. The only candidate filesystem positive
-route is the conditional new-object-under-controller-custody design in the next section, which is
-not approved or implemented. The controller derives attempt identity, approved object set, expected
+policy-approved, non-mutating observation** against an immutable, pre-armed attempt and scope. Under
+current DEC-009, all local filesystem effects from an untrusted worker or ordinary user-owned/writable
+path remain manual/external and cannot produce automatic trusted success. The verifier is an observer
+only: it never performs or mediates the effect being certified. The controller derives attempt
+identity, approved object set, expected
 artifacts, and policy ID from protected policy and state. The interactive caller cannot choose paths,
 commands, scripts, executable, environment, outputs, policy definitions, store paths, generation,
 attempt IDs, or a “verified” field; arbitrary caller input cannot mint an authoritative success.
-Trust binds to protected policy plus controller-created attempt/scope and independent
-observation/readback, not to the identity of the interactive caller. Caller-provided intent is only
+Trust binds to protected policy plus attempt/scope and independent observation, not to the identity
+of the interactive caller. Caller-provided intent is only
 an untrusted request to select an already armed eligible attempt; ambiguity, mismatch, or unsupported
 scope denies.
 
@@ -350,67 +349,15 @@ approval.
 
 | V1 target class | V1 result | Reason / gate |
 | --- | --- | --- |
-| Ordinary existing user-owned or worker-writable path, including a file the worker may have opened earlier | `INCOMPLETE` / manual operator or separately approved external attestation | No automatic success. Permissions changed after the fact do not revoke already-open Linux descriptors or Windows handles. Empty cgroup/Job, process enumeration, timestamps, stable file IDs, locks and equal pre/post digests do not establish exclusion. |
-| External mutable, remote, user-mounted, or otherwise uncontrolled target | `INCOMPLETE` / manual or separately approved external attestation | No local fence proven for the entire effect/readback interval. |
-| Source-only or foreground-process tests without an independently protected final object | `INCOMPLETE` / manual or external | Tests, worker claims, and worker-supplied copies alone are not authoritative readback. |
-| New per-attempt object held by an independently protected controller from creation; no worker or ordinary user ever receives final-object write access/handle | **Conditionally eligible only after separate exact owner/security approval and both native qualification lanes pass. Not approved or implemented by DEC-009.** | Must satisfy the per-OS positive transition below, the artifact's acceptance contract, durable generation binding, and all other FHM-005 gates. Otherwise `INCOMPLETE`. |
+| Any local filesystem effect from an untrusted worker or ordinary user-owned/writable path | `INCOMPLETE` / manual operator or separately approved external authoritative provider attestation | Includes newly created untrusted objects, snapshots, and controller copies of worker output. A controller's own create/write/reopen/hash attests only to its own effect, never the worker's. |
+| External mutable, remote, user-mounted, or otherwise uncontrolled target | `INCOMPLETE` / manual or separately approved external authoritative provider attestation | No independent local fence, executor, or readback positive authority exists under current DEC-009. |
+| Verifier observation of an effect | Observation only; never performs or mediates the certified effect | Worker claims, controller copies, snapshots, and controller-created outputs are not authoritative evidence of the worker's effect. |
 
-### Conditional positive transition: new object under exclusive controller custody
-
-This is a bounded future option, not an approved decision to build a broker or service extension.
-It avoids trying to infer or revoke every handle to an existing file: the final object is new, has
-no pre-existing writers, and is never opened for writing by a worker or ordinary user. A worker may
-provide untrusted input, but that input is not proof. A separately approved trusted controller must
-create the final per-attempt object under its protected storage root, apply the acceptance contract,
-write only through its own non-inheritable handle, durably flush and close that handle, then reopen
-the same object independently read-only through a pinned directory/object handle and verify object
-identity, attempt/generation binding, bounded content and expected digest. Any mismatch, alias,
-unexpected writer access, uncertain durability, or inability to prove exclusive custody yields
-`INCOMPLETE`; no receipt is issued. No existing user target is reclassified as trusted by copying it
-or by changing its permissions after a worker has run.
-
-The candidate native transitions are:
-
-* **Linux:** only after exact owner/security approval provisions the distinct service identity and
-  narrowly scoped protected storage, verifier creates a unique object relative to its pinned,
-  service-owned directory using exclusive create and no-follow semantics (`openat2`/`openat` with
-  the qualified resolution constraints, `O_CREAT|O_EXCL|O_NOFOLLOW`, restrictive mode). The worker
-  has no directory traversal/write access and is never passed the final object's descriptor. The
-  controller writes using a non-inheritable descriptor, `fsync`s the file and containing directory
-  as required by the qualified filesystem, closes the write descriptor, independently reopens
-  read-only, revalidates device/inode and attempt generation, and hashes the bounded object. The
-  service identity, directory grant, filesystem semantics and generation anchor are installation
-  decisions requiring separate approval; a non-root process changing permissions on an unrelated
-  user-owned target is not a fence.
-* **Windows:** only after exact owner/security approval provisions the distinct service identity and
-  protected storage DACL, verifier creates a unique object with `CREATE_NEW` and a protected security
-  descriptor that excludes the worker and ordinary user. No worker receives an object handle; all
-  handles are non-inheritable and the final object is never opened for worker write. Controller
-  flushes and closes its write handle, independently reopens read-only by a pinned directory/object
-  handle, verifies volume/file ID and generation, then hashes bounded contents. DACL changes are
-  not treated as revoking access through an already-open handle; the new-object/no-untrusted-handle
-  invariant is mandatory. Exact service SID, DACL, installation, filesystem and durable-generation
-  choices require separate approval.
-
-On both systems, the native acceptance test must verify denial of create/open/write through every
-allowed path for the worker and an unrelated process running as the interactive user; verify that
-no final-object descriptor/handle is inherited, duplicated, or passed to them; attempt rename,
-replacement, hard-link/reparse/path alias, truncate/rewrite, delayed writes and same-object mutation
-during the independent read; and inject crashes around flush, close, reopen and generation commits.
-The trusted controller must re-open and read the actual protected final object independently; a
-worker copy, digest, report or claimed close is never sufficient. Exact object identity and content
-must match the controller-derived attempt and acceptance contract. Any failed or unobservable check
-is `INCOMPLETE`/manual/external. These tests establish only the tested native configuration; they do
-not grant installation or ACL authority.
-
-For an existing object where a future separately approved native policy proposes permission
-revocation or ownership transfer, no positive result is permitted unless that OS demonstrates a
-reliable operation that excludes every pre-existing writer, including retained/dangling descriptors,
-for the entire read window. Linux mode/ACL changes do not invalidate already-open file descriptors;
-Windows DACL changes do not revoke access granted to already-open handles. This candidate specifies
-no such universal revocation primitive, handle enumeration proof, or process scan. Where proven
-closure is unavailable, the only possible conditional route is a fresh object version created and
-kept under exclusive trusted-controller custody as above; otherwise remain `INCOMPLETE`.
+Any future independent local verification requires a separate architecture/ADR and owner approval for
+a distinct effect executor, protected immutable effect target, OS-enforced writer exclusion including
+preexisting handles, native Linux and Windows hostile qualification, and exact effect acceptance.
+This is not an available positive route or implementation approval. Do not infer or introduce
+permissions, ACLs, or a local executor under DEC-009.
 
 **Required negative matrix (Linux and Windows):** same-object write during the pinned read,
 truncate/rewrite, write-then-restore, attempted retained/duplicated/inherited handle, late descendant,
@@ -518,7 +465,7 @@ bounded artifacts; skipped, simulated, emulated, timed out, or unobservable mean
 | Protocol | Wrong UID/PID/cgroup, nonce reuse, changed channel, stale generation, downgrade, unknown field, frame over 16 KiB, missing FD policy | Wrong token/SID/logon/integrity, failed impersonation/revert, pipe replacement, remote client, duplicate nonce, handle inheritance, downgrade | Typed reject/unavailable; never success |
 | Capability custody | Inspect raw `K` only in parent/controller protected volatile memory, dump/swap controls, inherited/passable FDs and worker access; test expiry and restart/replay | Inspect raw `K` only in parent/controller protected volatile memory, dump/debug behavior, handles and worker token; test expiry and restart/replay | No persistent verifier/key artifact; only live in-session proof succeeds; old/expired `K` rejected |
 | Store durability | No-follow/root ownership, DB/WAL/SHM/backup ACL, symlink/hardlink/mount/rename races, crash at every commit boundary, backup restore/rollback, CAS race | No-reparse/ACL, DB/WAL/SHM, junction/alternate path races, service crash/reboot, backup restore/rollback, CAS race | Fenced generation, exactly-once consume or sticky unknown; no auto-replay |
-| Artifact/effect boundary | Existing user/worker-writable paths are manual; conditionally test a fresh controller-created object in protected storage, no worker descriptor, independent reopen/readback, same-inode and alias races, crash/generation faults | Existing user/worker-writable paths are manual; conditionally test a fresh controller-created object under protected DACL, no worker handle, independent reopen/readback, file-ID/reparse/alias races, crash/generation faults | Current DEC-009 yields no filesystem auto-success. Conditional eligibility requires exact separate owner/security approval, new object with no untrusted writer capability from creation, independent readback and durable attempt-generation binding; otherwise `INCOMPLETE`/manual/external. Empty cgroup/Job and worker copies are never sufficient. |
+| Artifact/effect boundary | All local filesystem effects from an untrusted worker or ordinary user-owned/writable paths are `INCOMPLETE`/manual or require separately approved external authoritative provider attestation; verifier observation only | Same policy; native qualification required before any future architecture is considered | Current DEC-009 grants no independent local fence, executor, or readback positive authority. Newly created untrusted objects, snapshots, and controller copies of worker output remain incomplete. |
 | Teardown / rollback | Stop candidate process, fence generation, revoke K, preserve unresolved attempts, verify no orphan; restore prior nontrusted behavior | Stop services, revoke K, preserve unresolved attempts, remove candidate test state only, verify no orphan; restore prior nontrusted behavior | No receipt survives rollback as current; no uncertain action replay |
 
 Independent security approval is a gate before any privileged implementation. Further non-negotiable
@@ -564,13 +511,15 @@ DEC-009 records in-principle approval of the distinct restricted worker principa
 scoped read-only verifier access direction. It does not approve an identity, launch authority, path,
 service, ACL/permission change, risk acceptance, implementation or installation. Concrete native
 controls and any required permission changes remain subject to security review and later explicit
-owner approval. **Cursor closure note:** the unsatisfiable positive writer-fence claim is removed for
-v1: ordinary writable targets now always remain `INCOMPLETE`/manual/external. The new-object route is
-only a concrete, testable owner-gated option; this document does not claim the High finding closed,
-because no exact permission/install plan is approved and no native Linux or Windows proof has been
-run. The HMAC transcript likewise remains unproven until native evidence exists. No trusted
-filesystem success, implementation, installation, merge, or deployment is authorized by this
-candidate.
+owner approval. **Cursor closure note:** the High finding is addressed by removing every local
+filesystem positive route. All local filesystem effects from untrusted workers or ordinary
+user-owned/writable paths, including new untrusted objects and controller copies, remain
+`INCOMPLETE`/manual or require separately approved external authoritative provider attestation. The
+verifier is an observer only. Any future independent local verification needs a separate
+architecture/ADR, owner approval, and native Linux and Windows hostile qualification; it is not an
+available route or implementation approval now. The HMAC transcript likewise remains unproven until
+native evidence exists. No trusted filesystem success, implementation, installation, merge, or
+deployment is authorized by this candidate.
 
 ## 10. Approval questions / challenge points
 
