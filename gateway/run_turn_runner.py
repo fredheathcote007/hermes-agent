@@ -688,7 +688,8 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
     def _render_approval_sync(self, approval_data: dict) -> None:
         """Send the approval request from the agent thread: the adapter's interactive button
         approvals (``send_exec_approval``) when available, else plain text with ``/approve`` steps."""
-        from gateway.run import _approval_send_outcome, _format_exec_approval_fallback, _interim_metadata, _redact_approval_command
+        from gateway.run import _approval_send_outcome, _interim_metadata, _redact_approval_command
+        from gateway.run_approval import _format_exec_approval_fallback
         from gateway.run_turn_runner_approval_settle import register_timeout_notice
         ctx = self._ctx
         adapter = ctx._status_adapter

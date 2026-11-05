@@ -895,7 +895,9 @@ def _format_trust_gate_arguments(args: Any, *, compact: bool = False) -> Optiona
         return rendered
     except Exception:
         # Argument reprs are untrusted input. Never expose an exception or fall back to raw args;
-        # the caller turns this into a fail-closed trust-gate denial.
+        # the caller turns this into a fail-closed trust-gate denial. Keep the traceback so an
+        # unexpected formatter failure is diagnosable without weakening that boundary.
+        logger.exception("MCP trust-gate preview formatting failed; refusing to render")
         return None
 
 

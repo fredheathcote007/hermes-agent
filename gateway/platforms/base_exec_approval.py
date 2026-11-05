@@ -1,7 +1,7 @@
 """Shared wording for the exec-approval prompt every messaging surface renders.
 
 The button card (``BasePlatformAdapter._format_exec_approval``) and the plain-text
-``/approve`` fallback (``gateway.run._format_exec_approval_fallback``) must tell the user
+``/approve`` fallback (``gateway.run_approval._format_exec_approval_fallback``) must tell the user
 the same three things: what Hermes wants to run, why it was flagged, and that silence means
 the command does NOT run once ``approvals.timeout`` elapses. Keeping the text here means one
 edit changes every platform; adapters only wrap these strings in their own markup.

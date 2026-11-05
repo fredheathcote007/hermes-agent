@@ -772,7 +772,7 @@ class TestTrustGateAtCallTime:
         assert '"target":"/production/database"' in command
         assert '"operation":"delete"' in command
 
-        from gateway.run import _format_exec_approval_fallback
+        from gateway.run_approval import _format_exec_approval_fallback
         rendered = _format_exec_approval_fallback(command, "review", "/")
         assert command in rendered
         for fragment in ('"server":"srv"', '"tool":"mutate"',

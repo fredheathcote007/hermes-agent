@@ -37,6 +37,9 @@ def prepare_gateway_approval_command(command: str) -> str | None:
         prepared = escape_controls(redact_sensitive_text(str(command or ""), force=True))
         prepared = escape_controls(redact_sensitive_text(prepared, force=True))
     except Exception:
+        # This is a secret-egress boundary: an unexpected redaction/escaping failure must not
+        # fall back to the raw command. Keep the traceback for diagnosis while refusing to render.
+        logger.exception("Gateway approval command preparation failed; refusing to render")
         return None
     return prepared
 
