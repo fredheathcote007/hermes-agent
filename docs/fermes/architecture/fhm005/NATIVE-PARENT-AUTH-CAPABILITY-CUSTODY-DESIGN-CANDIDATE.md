@@ -1,38 +1,35 @@
 # FHM-005 native parent authentication and capability custody candidate
 
 **Status: unapproved security-design candidate.** DEC-008 approves two independently protected
-services (parent authority and verifier controller) on Linux and Windows. It does not approve this
-authentication mechanism, service provisioning, installation, OS policy, receipt authority,
-implementation, deployment, merge, or trusted-mode enablement. This revision records three High
-severity independent-review findings and candidate mitigations; none is approved, implemented, or
-natively proven. **Pending owner decision:** approve (or reject) a distinct worker principal and
-scoped readback ACL authorizations on both platforms. Stop before any privileged installation.
+services (parent authority and verifier controller) on Linux and Windows. DEC-009 approves only the
+direction in principle of a distinct restricted worker principal/token and narrowly scoped,
+read-only verifier access to allowlisted targets. It does not approve any specific identity, path,
+service, ACL or permission change, implementation, trusted-verification enablement, merge, or
+deployment. This revision specifies candidate resolutions for two remaining High findings; neither
+has been implemented or natively proven. All established security review and testing gates remain.
 
 | Field | Value |
 | --- | --- |
 | Project / issue | `fermes-hermes` / [FHM-005 P0](https://github.com/fredheathcote007/hermes-agent/issues/5) |
-| Branch / reviewed source SHA | `fermes/fhm005-dr02-native-security-20261027` / `ec0fd548be1deed3ffed318358292c32aac6b8cd` |
-| Decisions | [DEC-004–008](../../memory/DECISIONS.md) |
+| PR / branch / baseline SHA | [PR #50](https://github.com/fredheathcote007/hermes-agent/pull/50) / `fermes/fhm005-dr02-native-security-20261027` / `ad54a8ca7c065910d75f9a5868cb859cf290a526` |
+| Decisions | [DEC-004–009](../../memory/DECISIONS.md) |
 | Related design | [DR-02/DR-04 candidate](DR02-DR04-SECURITY-DESIGN-CANDIDATE.md), [ADR candidates](ADR-DR02-DR07-CANDIDATE.md), [detailed design](DETAILED-DESIGN-CANDIDATE.md), [validation plan](VALIDATION-PLAN.md) |
 | Scope | DR-02 parent/controller identity and capability custody, plus DR-04 protected store fencing; FHM-007 excluded |
 
-## PR #50 independent review remediation — candidate only
+## PR #50 remaining Cursor High findings — candidate only
 
-The following three High findings block security approval. These candidate mitigations require
-explicit owner/security approval, implementation review, and native Linux and Windows evidence.
-DEC-008 approves only the paired protected-service topology; it does not approve these controls.
+These two findings block security approval. The mechanisms and acceptance tests below are design
+requirements, not implementation evidence or permission to install or change host policy.
 
-| Finding | Severity and trace | Candidate mitigation (not approved or proven) | Required native positive and negative tests |
+| Finding | Severity and gap | Candidate resolution | Required native positive and negative tests |
 | --- | --- | --- | --- |
-| HMAC capability contradiction | **High.** Previous text retained only a one-way controller verifier while PROVE required `HMAC-SHA-256(K, message)`. A verifier cannot recover `K`. | Keep uniformly random 256-bit raw `K` in protected volatile memory in both services for the authenticated service-instance session. The controller uses it for constant-time HMAC verification; it stores no verifier or reversible form on disk. Set a short explicit monotonic expiry; erase and reject after expiry, failed/ambiguous proof, service restart, generation advance, service-instance change, policy upgrade, or store recovery. Restart durably advances/fences the generation before readiness; only fresh authenticated bootstrap mints a new `K`. This is ephemeral service memory, not persistent storage. If same-user memory, dump, swap, or handle access cannot be prevented for the key's lifetime, remain unavailable/manual. | **Positive:** live designated services complete fresh proofs before expiry; expiry and restart require re-bootstrap. **Negative:** native same-user memory/dump/handle access attempts, nonce replay, expired/prior-generation key, and post-restart proof are rejected on each OS. No mocked or unsupported protection counts as PASS. |
-| Worker can inherit controller identity | **High.** Windows `STARTUPINFOEX` handle allowlisting limits inherited handles but does not change the worker security principal. On Linux, `NoNewPrivileges=yes` prevents switching to another worker UID using `setuid`. | Require workers to execute under a separate, independently restricted non-service principal/token, provisioned and validated by a privileged installer and native checks. Never launch arbitrary worker code as the controller service identity. The approved paired-service topology does not provide this launch mechanism. If a least-privilege launch authority cannot establish and validate the separate principal without broadening controller authority, fail closed to manual/external verification. Handle filtering and `NoNewPrivileges` are not identity separation. | **Positive:** actual native process/token inspection proves controller, parent, and worker have distinct principals and the worker cannot access either service's memory, IPC authority, or protected store. **Negative:** request launch as either service identity and attempt UID/token substitution and service/store access; launch must be denied or verification unavailable. Mocks do not qualify. |
-| Verifier cannot read ordinary user home/project targets | **High.** Distinct Linux/Windows service principals cannot assume access to user-owned targets; no approved snapshot/descriptor channel exists and received descriptors are closed. | Define a narrow, owner-authorized, read-only allowlist of target roots/objects the verifier may traverse. Provision exact OS ACLs only for those roots and descendants; no broad home/profile access. Read directly from actual targets through pinned handles with no-follow/reparse rejection and strict allowlist containment. Do not trust worker copies or descriptors. If the actual target is inaccessible, outside the allowlist, or cannot be safely pinned, report `INCOMPLETE`/manual or separately approved external attestation, never success. ACL grants and staging require owner approval and native proof. | **Positive:** the designated service reads an allowlisted actual target read-only and returns controller-derived identity/digest evidence. **Negative:** attempt unlisted paths, parent traversal, symlink/reparse/junction escape, replacement races, worker copies, ACL widening, and writes; deny or report `INCOMPLETE`, with no success or broad profile traversal. Run on both native OSes. |
+| Incomplete HMAC proof transcript | **High.** `Np2`, transcript encoding/order, OS-authenticated connection-instance binding, and the source of channel-binding bytes were unspecified, so the controller could not independently reconstruct the exact MAC input or reliably reject cross-connection, stale-generation, and replayed proofs. | Specify a versioned byte-exact transcript; controller creates/transmits `Nc2` and per-connection binding nonce; parent creates/transmits fresh `Np2`; both bind live OS-authenticated peer/service and endpoint instances plus both generations. Controller derives its transcript fields from its own pinned connection and service-manager evidence and compares exact input in constant time. No transport-exporter or undocumented OS API is assumed. If the native transport instance cannot be pinned and bound reliably, fail closed. | On Linux and Windows, positive fresh proof on one authorized connection; negative altered field/order/length, nonce reuse, replay on a second connection or endpoint, stale/changed service instance, generation mismatch, downgrade and reconnect tests. Verify controller recomputes byte-for-byte; no `K` in logs or persistent data. |
+| Same-inode writer race during independent readback | **High.** A target can be changed in place while the verifier reads it; pre/post inode/file ID equality and matching metadata do not prove that no write overlapped the read. | Require strong action-scoped writer quiescence before readback: contained writer process tree is terminated and proven empty, its write-capable handles are gone, and all other principals capable of writing the target are excluded by a reliable, already-authorized native fence for the whole read window. Metadata and digest checks only supplement this gate. Do not install broad ACLs, use a snapshot, or accept a trusted-worker copy. If writers cannot be excluded or quiescence cannot be established, result is `INCOMPLETE`/manual/external and no automatic replay. | On both native OSes, race in-place writes using the same inode/file ID during a pinned-handle read, including truncate/rewrite and write-then-restore; test open writer handles, delayed descendants and external writers. Each uncertain/overlapping case must fail closed. Positive success requires proven writer fence plus stable pinned readback. |
 
-**Exact pending owner decision before privileged work:** approve or reject (a) a distinct worker
-principal/token and its restricted launch authority, and (b) read-only ACL grants for explicitly
-allowlisted target roots. These are candidate controls within the paired-service topology, not an
-approved topology expansion. Until authorized, install no identities, ACLs, services, or staging;
-trusted verification remains unavailable/manual where these controls are required.
+DEC-009 records the owner’s limited in-principle approval. No particular SID/UID, group, path, service,
+permission or ACL change is approved. Native mechanism details and any future installation plan still
+require security review and the established testing gates. Do not install services, identities,
+ACLs, or staging under this decision.
 
 ## 1. Decision proposed for review
 
@@ -233,24 +230,70 @@ root authority, receipt state, or capability is trusted without derivation/valid
    configuration, endpoint parent and store ACL/object identity. Failure means no listener.
 2. **OS_AUTH:** accept local stream; authenticate peer using the native checks above. Bind the
    accepted socket/pipe instance to the pinned peer process object. Reject all other principals.
-3. **CHALLENGE:** controller sends protocol range, fresh 256-bit `Nc`, controller instance ID,
-   durable controller generation `Gc`, and endpoint-instance ID. Parent returns fresh 256-bit `Np`,
-   parent instance ID, and an exact echo of `Nc`, `Gc`, endpoint-instance ID and negotiated protocol.
-   This response binds the service's bootstrap state to the authenticated connection; the identity
-   authority remains the already-checked OS service principal and manager evidence. No pre-shared
-   secret is claimed to exist before this step.
+3. **CHALLENGE:** controller sends protocol version/range, fresh 32-byte `Nc`, controller instance
+   identifier, durable controller generation `Gc`, and endpoint-instance identifier. Parent returns
+   a fresh 32-byte `Np`, parent instance identifier and generation `Gp`, and exact echoes of `Nc`,
+   `Gc`, endpoint-instance identifier and negotiated protocol. The identity authority remains the
+   OS-authenticated principal and service-manager evidence, not these wire fields.
 4. **MINT:** after parent process/service-instance validation, controller mints random `K`, retains
    raw `K` only in protected volatile memory with an explicit short monotonic expiry, and binds it to
-   `(parent process object, parent instance, controller instance, Gc, protocol, endpoint instance)`.
-   It returns `K` once over the authenticated local channel; parent stores K only in protected
-   volatile memory for that service instance. The bootstrap connection is then closed; no later
-   channel inherits its authority implicitly. Neither service persists a verifier or key form.
-5. **PROVE:** for each new connection controller redoes OS_AUTH, sends fresh `Nc2` and current
-   `(Gc, controller instance, endpoint instance)`. Parent responds with `HMAC-SHA-256(K, "parent" ||
-   Nc2 || Np2 || Gc || parent instance || controller instance || endpoint instance || protocol ||
-   channel binding)`. Controller uses constant-time comparison, single-use nonce tracking, and
-   exact live-instance binding. Reject duplicate, stale, early, wrong-generation, wrong-channel,
-   or cross-service proof. `Np2` is also fresh CSPRNG data.
+   the authenticated parent and controller service instances, `Gc`, `Gp`, protocol and endpoint
+   instance. It returns `K` once over the authenticated local channel; parent stores K only in
+   protected volatile memory for that service instance. The bootstrap connection is then closed; no
+   later channel inherits its authority implicitly. Neither service persists a verifier or key form.
+5. **PROVE:** for each new connection controller redoes OS_AUTH and pins the accepted native
+   connection/pipe instance to the verified peer process and service-manager instance. It creates
+   fresh 32-byte `Nc2` and fresh 32-byte `B2` from the OS CSPRNG, records both against that exact
+   live native handle, then sends protocol version, `Nc2`, `B2`, `Gc`, `Gp`, parent/controller
+   instance identifiers, endpoint-instance identifier, and canonical OS identity-binding fields.
+   The parent creates fresh 32-byte `Np2` from its OS CSPRNG and returns it with exact echoes of
+   those challenge fields and
+   `HMAC-SHA-256(K, T)`, where `T` is the following exact concatenation (all integers unsigned,
+   big-endian; `LP(x)` means `u32be(number of bytes in x) || x`; fixed nonces are exactly 32
+   bytes; no Unicode normalization, omitted fields, or alternate integer representation is allowed):
+
+   ```text
+   ASCII("FHM5-PROVE") || u16be(1) ||
+   LP(ASCII("parent-to-controller")) ||
+   Nc2 || Np2 || u64be(Gc) || u64be(Gp) ||
+   LP(protocol_id) || LP(parent_instance_id) || LP(controller_instance_id) ||
+   LP(endpoint_instance_id) || LP(os_identity_binding) || B2
+   ```
+
+   `protocol_id`, instance identifiers and endpoint identifier are opaque bounded byte strings
+   defined by the negotiated protocol and echoed byte-for-byte; their canonical encoding is UTF-8
+   only where that protocol field is explicitly textual. `os_identity_binding` is the controller-
+   generated canonical byte encoding of its authoritative native peer principal plus
+   service-manager instance evidence for this accepted connection. Before implementation, a
+   versioned platform-adapter contract must specify a domain/version tag, field order, widths,
+   byte order, absent-field rules, and the native API/evidence source for every field; no implicit
+   structure serialization is permitted. The Linux contract must cover peer UID and PID from the
+   authenticated socket, a process-lifetime pin (pidfd or an explicitly justified equivalent plus
+   start-time/reuse validation), and systemd unit identity/instance evidence from the service
+   manager. The Windows contract must cover authenticated named-pipe client token identity (service
+   SID and required token attributes) and process-instance validation plus SCM service identity and
+   instance evidence. The implementer must demonstrate that the controller can independently
+   obtain and encode the same canonical bytes from its own accepted-handle and service-manager
+   observations; if any platform cannot supply stable equivalent evidence, that platform adapter
+   remains unavailable/manual. These are contract requirements, not claims that a particular API
+   guarantees the binding. The verifier's exact bytes are retained unchanged for recomputation.
+   The controller computes this field from
+   its own peer credentials/token and pinned process/service-manager evidence, never from a caller
+   claim, then recomputes `T` byte-for-byte from its stored challenge and current durable
+   generations. `B2` is not a claimed OS transport exporter: it is a fresh controller nonce bound in
+   controller state to the exact OS-authenticated accepted socket/pipe handle and endpoint instance.
+   The OS_AUTH checks, pinned live handle and verified process/service instance are mandatory parts
+   of that binding; `B2` alone is not identity evidence. No undocumented exporter/API is assumed.
+   Parent's `Np2` is generated once for this response, transmitted with the MAC, and accepted only
+   with the exact `Nc2`/`B2` challenge outstanding on that same pinned connection. Both sides reject
+   unknown versions, noncanonical lengths, trailing bytes, duplicate fields and non-exact echoes.
+   Controller performs constant-time MAC comparison, consumes the challenge once, and rejects
+   duplicate, stale, expired, replayed, cross-connection, cross-endpoint, cross-service or
+   generation-mismatched proofs. Never log `K`, `T`, `Np2`, `Nc2`, `B2`, or the MAC. If native
+   OS_AUTH cannot reliably pin the transport instance to the service identity for the full exchange,
+   proof fails closed and trusted verification remains unavailable/manual. The canonical transcript
+   and all variable fields are bounded by the existing 16 KiB frame maximum; oversize values fail
+   closed before allocation or MAC computation.
 6. **AUTHORIZE:** authenticated parent submits only typed `INTENT`, `BEGIN_ATTEMPT`, `STATUS`, or
    exact `CONSUME` requests. Controller resolves policy IDs from root-owned policy and derives the
    attempt, nonce, generation and store state itself. It never accepts shell text or project-supplied
@@ -291,19 +334,53 @@ authorize arbitrary user intent. Explicit owner approval of this v1 effect taxon
 
 The verifier's service identity must not be assumed to read the interactive user's home or project
 tree. Candidate readback is limited to explicit, owner-authorized target roots or objects derived
-from controller-owned policy and the pre-armed attempt. The verifier receives only the read and
-directory-traversal ACLs needed for those roots; no recursive grant over the user profile, general
-project-root access, or worker-selected root is permitted. Exact root ACLs and any target staging
-require separate owner approval before privileged installation.
+from controller-owned policy and the pre-armed attempt. DEC-009 approves this direction in
+principle only. The verifier may receive only read and directory-traversal rights required for those
+roots; no recursive grant over the user profile, general project-root access, or worker-selected root
+is permitted. No specific ACL, path, principal or permission change is approved; each concrete grant
+requires the established security review and later implementation/install approval.
 
-The verifier reads the actual target in place using pinned directory/object handles, strict
-containment beneath the allowlisted root, and no-follow/reparse-point rejection at every component.
-It checks object identity around reads and does not accept worker copies, caller paths, or received
-descriptors as evidence. Readback is read-only and bounded to the controller-derived artifact set.
-If a target cannot be reached, pinned, or shown to be inside the approved allowlist, the result is
-`INCOMPLETE`/manual or separately approved external attestation; it is never successful verification.
-Native tests must prove the intended read path and denial of unlisted paths, traversal, replacement
-races, and writes on Linux and Windows.
+Before opening the readback window, controller must establish a strong, action-scoped writer fence:
+(1) every process started for the attempt is contained in the approved native process-tree boundary;
+(2) the worker and all descendants are terminated, process objects confirm exit, and the cgroup/Job
+Object or equivalent containment is empty; (3) no contained process retains a write-capable target
+handle; and (4) every other principal with effective write authority to the target is excluded for
+the entire read window by a reliable, natively validated fence already permitted by policy. If that
+exclusion cannot be proven, the target is externally writable and cannot produce automatic success.
+On Linux this requires a service-owned cgroup boundary whose membership/emptiness and process
+termination are checked after closing admission to new descendants; process groups alone are
+insufficient. On Windows it requires assignment before worker code runs to a Job Object configured
+to deny breakaway and terminate on close, followed by confirmed zero active processes. Job membership
+does not prove closure of duplicated or otherwise retained file handles, and a Job Object does not
+exclude unrelated principals with write access; handle ownership and those external writers need
+independent proof. Where the OS cannot prove those properties, there is no automatic success.
+The fence must prevent late descendants,
+background writers, inherited handles and concurrent external writers; checking that a root process
+exited is insufficient. Do not treat advisory locks, timestamps, stable inode/file ID, or
+pre/post-equal digests as proof of exclusive writer quiescence. The design does not prescribe an
+unapproved permission change to create a fence. If the host cannot prove the fence without one, the
+result is `INCOMPLETE`/manual or separately approved external attestation, with no automatic replay.
+
+Acceptance matrix on both operating systems: positive success only with exclusive contained-writer
+quiescence established before pinned readback; negative same-inode/file-ID concurrent write during
+read, truncate/rewrite, write-then-restore, held or duplicated write-capable handle, descendant
+created before containment closes admission, delayed descendant, Job breakaway/assignment failure,
+cgroup/Job still populated, and unrelated external writer. Each negative case must produce
+`INCOMPLETE`/manual, no successful receipt and no automatic replay; inability to observe a race or
+prove exclusion is itself a failure. Tests must include races triggered during the actual read and
+not rely solely on post-read metadata checks.
+
+After the fence, verifier reads the actual target in place through pinned directory/object handles,
+strict containment beneath the allowlisted root, and no-follow/reparse-point rejection at every
+component. It records native object identity, size, digest and available timestamps immediately before
+and after the bounded read as supplementary race detection, and requires stable identity and
+content. This read is not a substitute for writer exclusion: same-inode writes during the read,
+including write-then-restore, invalidate automatic success even if final metadata/digest match. No
+snapshot, trusted-worker copy, caller path, or received descriptor is evidence. Readback remains
+read-only and bounded to controller-derived artifacts. Native Linux and Windows tests must force
+same-inode writes during pinned reads, truncate/rewrite, write-then-restore, held writer handles,
+delayed descendants, and uncontrolled external writers. Any overlap, uncertainty, or inability to
+prove exclusion is `INCOMPLETE`/manual/external; no successful receipt and no automatic replay.
 
 ## 5. DR-04 durable receipt custody and restart fencing
 
@@ -403,7 +480,7 @@ bounded artifacts; skipped, simulated, emulated, timed out, or unobservable mean
 | Protocol | Wrong UID/PID/cgroup, nonce reuse, changed channel, stale generation, downgrade, unknown field, frame over 16 KiB, missing FD policy | Wrong token/SID/logon/integrity, failed impersonation/revert, pipe replacement, remote client, duplicate nonce, handle inheritance, downgrade | Typed reject/unavailable; never success |
 | Capability custody | Inspect raw `K` only in parent/controller protected volatile memory, dump/swap controls, inherited/passable FDs and worker access; test expiry and restart/replay | Inspect raw `K` only in parent/controller protected volatile memory, dump/debug behavior, handles and worker token; test expiry and restart/replay | No persistent verifier/key artifact; only live in-session proof succeeds; old/expired `K` rejected |
 | Store durability | No-follow/root ownership, DB/WAL/SHM/backup ACL, symlink/hardlink/mount/rename races, crash at every commit boundary, backup restore/rollback, CAS race | No-reparse/ACL, DB/WAL/SHM, junction/alternate path races, service crash/reboot, backup restore/rollback, CAS race | Fenced generation, exactly-once consume or sticky unknown; no auto-replay |
-| Artifact/effect boundary | Read only allowlisted actual target through pinned no-follow handles; replace root/artifact during check, hardlink or mount substitution, late writer, unlisted path | Read only allowlisted actual target through pinned non-reparse handles; junction/reparse/file-ID/case/volume substitution, late writer/lock, unlisted path | Approved target remains contained and stable during bounded readback; unlisted/inaccessible target is `INCOMPLETE`/manual, never success |
+| Artifact/effect boundary | Read only allowlisted actual target through pinned no-follow handles; replace root/artifact during check, hardlink or mount substitution, same-inode write during pinned read, truncate/rewrite, write-then-restore, delayed/escaped descendant, external writer, unlisted path | Read only allowlisted actual target through pinned non-reparse handles; junction/reparse/file-ID/case/volume substitution, same-file-ID write during pinned read, truncate/rewrite, write-then-restore, delayed/escaped descendant, external writer, unlisted path | Success only after proven process-tree and external-writer fence plus pinned stable readback; any same-inode race or unproven writer is `INCOMPLETE`/manual, never success |
 | Teardown / rollback | Stop candidate process, fence generation, revoke K, preserve unresolved attempts, verify no orphan; restore prior nontrusted behavior | Stop services, revoke K, preserve unresolved attempts, remove candidate test state only, verify no orphan; restore prior nontrusted behavior | No receipt survives rollback as current; no uncertain action replay |
 
 Independent security approval is a gate before any privileged implementation. Further non-negotiable
@@ -444,10 +521,13 @@ concrete installation/upgrade/rollback plan, DR-04 details, and any trusted-mode
 approval is inferred here. Privileged implementation and trusted mode remain gated on owner and
 independent security review plus native Linux and Windows evidence.
 
-The three High findings add this exact pending decision: approve or reject a separately restricted
-worker principal/token and the least-privilege launch authority needed to use it, plus read-only ACL
-grants for explicitly allowlisted target roots. No identities, ACLs, or staging may be installed
-until that decision and the concrete native plan are approved.
+DEC-009 records in-principle approval of the distinct restricted worker principal/token and narrowly
+scoped read-only verifier access direction. It does not approve an identity, launch authority, path,
+service, ACL/permission change, risk acceptance, implementation or installation. Concrete native
+controls and any required permission changes remain subject to security review and later explicit
+owner approval. The two remaining High findings are the proof-transcript and writer-quiescence gaps
+addressed in this candidate; until natively demonstrated on both operating systems, trusted
+verification remains unavailable/manual.
 
 ## 10. Approval questions / challenge points
 
