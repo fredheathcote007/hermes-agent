@@ -15,14 +15,15 @@ class _Agent:
     session_id = "s1"
 
     def __init__(self, results):
-        self.results, self.calls = list(results), []
+        self.results, self.calls, self.authors = list(results), [], []
         self._session_db = self
 
     def get_messages_as_conversation(self, _sid):
         return [{"role": "user", "content": "from-store"}]
 
-    def run_conversation(self, message, conversation_history=None):
+    def run_conversation(self, message, conversation_history=None, turn_author=None):
         self.calls.append((message, conversation_history))
+        self.authors.append(turn_author)
         return self.results.pop(0)
 
 
@@ -63,6 +64,7 @@ def test_failed_turn_retries_in_place_from_frame_carrier(tmp_path, monkeypatch):
     assert context["task_id"] in nudge and "t_foreign" not in nudge
     assert history == FAILED["messages"]  # same session context, not a cold restart
     assert session_kanban.worker_exit_code(path, context) == 0
+    assert agent.authors == [session_kanban.KANBAN_TURN_AUTHOR] * 2
 
 
 def test_unprovable_claim_denies_retry_and_goal_continuation(tmp_path, monkeypatch):
@@ -75,3 +77,18 @@ def test_unprovable_claim_denies_retry_and_goal_continuation(tmp_path, monkeypat
 
     assert result["failed"] and len(agent.calls) == 1 and goal_calls == []
     assert session_kanban.worker_exit_code(path, context) == kb.KANBAN_RATE_LIMIT_EXIT_CODE
+
+
+def test_goal_continuation_keeps_dispatcher_attribution(tmp_path, monkeypatch):
+    _path, _context, frame = _claimed_frame(tmp_path, monkeypatch, goal_mode=True)
+    monkeypatch.setattr(
+        "hermes_cli.goals.run_kanban_goal_loop",
+        lambda **kwargs: kwargs["run_turn"]("continue the goal"),
+    )
+    agent = _Agent([{"completed": True, "final_response": "first"},
+                    {"completed": True, "final_response": "continued"}])
+
+    result = session_kanban.run_worker_turns(agent, frame, [])
+
+    assert result["final_response"] == "continued"
+    assert agent.authors == [session_kanban.KANBAN_TURN_AUTHOR] * 2
