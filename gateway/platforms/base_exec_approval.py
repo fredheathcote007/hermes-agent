@@ -1,7 +1,7 @@
 """Shared wording for the exec-approval prompt every messaging surface renders.
 
 The button card (``BasePlatformAdapter._format_exec_approval``) and the plain-text
-``/approve`` fallback (``gateway.run._format_exec_approval_fallback``) must tell the user
+``/approve`` fallback (``gateway.run_approval._format_exec_approval_fallback``) must tell the user
 the same three things: what Hermes wants to run, why it was flagged, and that silence means
 the command does NOT run once ``approvals.timeout`` elapses. Keeping the text here means one
 edit changes every platform; adapters only wrap these strings in their own markup.
@@ -20,6 +20,11 @@ from agent.i18n import t
 # Bare strings; adapters add their own bold/HTML around them.
 EA_HEADER_TEXT = "Hermes wants to run a command that needs your OK"
 EA_REASON_LABEL_TEXT = "Why it was flagged"
+
+# The plain gateway fallback renders only the first 200 characters of the command.  Untrusted MCP
+# trust-gate payloads must fit this strictest approval surface because late arguments can be the
+# mutating part of the call; native adapters have larger budgets but are not a safe lower bound.
+GATEWAY_APPROVAL_COMMAND_MAX_CHARS = 200
 
 # Timeout notice posted when nobody answered the prompt (``{window}`` = "5 minutes").
 APPROVAL_TIMED_OUT_NOTICE = (

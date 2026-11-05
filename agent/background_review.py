@@ -378,6 +378,12 @@ _MEMORY_ROUTING_BLOCK = (
     "their size limits and crowds out the facts that matter; misrouting it puts it where the next "
     "session won't look. If the tool schema lists only one "
     "target, that store is the only one enabled — use it and skip the other.\n\n"
+    "Save only facts GROUNDED in this conversation — a user's actual statement or a tool result "
+    "you can point to. Never guess the user's traits, skill level, role, mood or preferences from "
+    "topic, tone or tools used, and never turn a one-off request into a standing preference (in "
+    "either store) without direct evidence that the user marked it general ('always', 'from now on', "
+    "'remember') or stated a standing like/dislike ('I hate X', 'stop doing Y'). If unsure, leave "
+    "it out — a wrong fact misleads every future session.\n\n"
 )
 
 _MEMORY_REVIEW_PROMPT = (

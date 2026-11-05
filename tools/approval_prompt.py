@@ -10,11 +10,38 @@ import logging
 import os
 import sys
 import threading
+import unicodedata
 from tools import approval_context as _ctx, approval_gateway_wait as _gw
 from tools.approval_human_wait import activity_heartbeat, human_wait_window
 from tools.interrupt import is_interrupted
 
 logger = logging.getLogger("tools.approval")
+
+
+def prepare_gateway_approval_command(command: str) -> str | None:
+    """Return a fully redacted, control-escaped gateway command.
+
+    The MCP trust-gate caller applies the gateway fallback's length limit after this preparation,
+    before the approval queue/notify path. Keeping preparation separate preserves generic
+    elicitation and other approval callers.
+    """
+    from agent.redact import redact_sensitive_text
+
+    def escape_controls(value: str) -> str:
+        return "".join(
+            f"\\u{ord(char):04x}" if unicodedata.category(char) in ("Cc", "Cf") else char
+            for char in value
+        )
+
+    try:
+        prepared = escape_controls(redact_sensitive_text(str(command or ""), force=True))
+        prepared = escape_controls(redact_sensitive_text(prepared, force=True))
+    except Exception:
+        # This is a secret-egress boundary: an unexpected redaction/escaping failure must not
+        # fall back to the raw command. Keep the traceback for diagnosis while refusing to render.
+        logger.exception("Gateway approval command preparation failed; refusing to render")
+        return None
+    return prepared
 
 
 def prompt_dangerous_approval(command: str, description: str, timeout_seconds: int | None = None,
@@ -279,7 +306,7 @@ def _transport_choice(attempt: dict, *, pattern_key: str, description: str):
 
 def _consent(choice, unresolved: str) -> str:
     """Map an approval choice to an elicitation verdict; *unresolved* is the no-answer outcome."""
-    if choice in ("once", "session", "always"):
+    if choice == "once":
         return "accept"
     return unresolved if choice in ("timeout", "cancelled") else "decline"
 
@@ -323,7 +350,8 @@ def request_elicitation_consent(message: str, description: str, *,
             decision = _gw._await_gateway_decision(
                 session_key, notify_cb, {"command": message, "description": description,
                                          "pattern_key": "mcp_elicitation",
-                                         "pattern_keys": ["mcp_elicitation"]}, surface=surface)
+                                         "pattern_keys": ["mcp_elicitation"],
+                                         "allow_session": False, "allow_permanent": False}, surface=surface)
         except Exception as exc:
             logger.error("Elicitation gateway dispatch failed: %s", exc, exc_info=True)
             return "decline"
@@ -350,7 +378,7 @@ def request_elicitation_consent(message: str, description: str, *,
         # allow_permanent=False: elicitation is a per-call confirmation — no pattern to remember.
         # Pass the agent thread's panel callback: without it prompt_toolkit fails the prompt closed unseen.
         choice = prompt_dangerous_approval(message, description, timeout_seconds=timeout_seconds,
-                                           allow_permanent=False, title=title,
+                                           allow_permanent=False, allow_session=False, title=title,
                                            approval_callback=_get_approval_callback())
         hook_choice = choice
     except Exception as exc:

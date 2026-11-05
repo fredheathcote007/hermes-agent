@@ -210,6 +210,30 @@ class TestElicitationHandlerContextBridge:
 
         assert result.action == "decline"
 
+    def test_long_gateway_elicitation_message_is_not_mcp_trust_capped(self):
+        """Generic server elicitation keeps its existing gateway message contract."""
+        from gateway.session_context import clear_session_vars, set_session_vars
+        from tools import approval, approval_prompt
+
+        message = "please confirm " + "x" * 400
+        session_key = "long-generic-elicitation"
+        tokens = set_session_vars(platform="telegram", session_key=session_key)
+        approval.register_gateway_notify(session_key, lambda _data: None)
+        seen = {}
+
+        def capture(_session_key, _notify, approval_data, **_kwargs):
+            seen.update(approval_data)
+            return {"resolved": True, "choice": "deny"}
+
+        try:
+            with patch.object(approval_prompt._gw, "_await_gateway_decision", capture):
+                assert approval_prompt.request_elicitation_consent(message, "generic") == "decline"
+        finally:
+            approval.unregister_gateway_notify(session_key)
+            clear_session_vars(tokens)
+
+        assert seen["command"] == message
+
 
 class TestRequestedSchemaFieldName:
     """The requested schema must be read off the *real* SDK model.
@@ -257,3 +281,46 @@ class TestRequestedSchemaFieldName:
         # An empty schema renders the generic "Approval requested by ..."
         # fallback, so the field name is what proves the schema was read.
         assert "card_number" in (captured.get("description") or ""), captured
+
+
+@pytest.mark.parametrize("choice", ["session", "always"])
+def test_gateway_mcp_elicitation_rejects_reusable_authorisation_scopes(choice):
+    from tools import approval, approval_prompt
+
+    seen = {}
+    session_key = "mcp-elicitation-scope"
+    approval.register_gateway_notify(session_key, lambda _data: None)
+
+    def await_decision(_session_key, _notify, approval_data, **_kwargs):
+        seen.update(approval_data)
+        return {"resolved": True, "choice": choice}
+
+    try:
+        with patch.object(approval_prompt._ctx, "get_current_session_key", return_value=session_key), \
+             patch.object(approval_prompt._ctx, "_is_single_query_approval_context", return_value=False), \
+             patch.object(approval_prompt._ctx, "_is_gateway_approval_context", return_value=True), \
+             patch.object(approval_prompt._gw, "_await_gateway_decision", side_effect=await_decision):
+            assert approval_prompt.request_elicitation_consent("approve", "MCP") == "decline"
+    finally:
+        approval.unregister_gateway_notify(session_key)
+
+    assert seen["allow_session"] is False
+    assert seen["allow_permanent"] is False
+
+
+@pytest.mark.parametrize("choice", ["session", "always"])
+def test_cli_mcp_elicitation_rejects_reusable_authorisation_scopes(choice):
+    from tools import approval_prompt
+
+    captured = {}
+
+    def prompt(*_args, **kwargs):
+        captured.update(kwargs)
+        return choice
+
+    with patch.object(approval_prompt._ctx, "_no_user_can_answer", return_value=False), \
+         patch("tools.approval_prompt.prompt_dangerous_approval", side_effect=prompt):
+        assert approval_prompt.request_elicitation_consent("approve", "MCP") == "decline"
+
+    assert captured["allow_session"] is False
+    assert captured["allow_permanent"] is False

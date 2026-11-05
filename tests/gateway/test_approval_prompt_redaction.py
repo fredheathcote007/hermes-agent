@@ -99,8 +99,31 @@ class TestApprovalCommandWiring:
 
 
 class TestApprovalTextFallbackContract:
+    def test_mcp_compact_payload_and_cost_notice_render_on_base_adapter(self):
+        """The real base adapter and text fallback expose the complete reviewed payload and cost."""
+        from gateway.config import PlatformConfig
+        from gateway.platforms.api_server import APIServerAdapter
+        from gateway.run_approval import _format_exec_approval_fallback
+
+        command = ('MCP untrusted call {"server":"srv","tool":"paid_render",'
+                   '"arguments":{"target":"/production/database","operation":"delete"}}')
+        description = (
+            "MCP untrusted call; approve once only after reviewing the complete payload. "
+            "Costs about 40 credits. This chat has used about 80 credits on 'srv' (limit 100)."
+        )
+        adapter = APIServerAdapter(PlatformConfig(enabled=True))
+        native_text = adapter._format_exec_approval(command, description)
+        fallback_text = _format_exec_approval_fallback(command, description, "/")
+
+        for rendered in (native_text, fallback_text):
+            assert command in rendered
+            assert '"target":"/production/database"' in rendered
+            assert '"operation":"delete"' in rendered
+            assert "Costs about 40 credits." in rendered
+            assert "used about 80 credits" in rendered
+
     def test_smart_deny_only_advertises_one_operation(self):
-        from gateway.run import _format_exec_approval_fallback
+        from gateway.run_approval import _format_exec_approval_fallback
 
         text = _format_exec_approval_fallback(
             "rm -rf /", "dangerous deletion", "/",
@@ -112,7 +135,7 @@ class TestApprovalTextFallbackContract:
 
     def test_text_fallback_says_silence_means_no(self, monkeypatch):
         """Surfaces without buttons get the same deadline line as the button card."""
-        from gateway.run import _format_exec_approval_fallback
+        from gateway.run_approval import _format_exec_approval_fallback
 
         monkeypatch.setattr("gateway.platforms.base_exec_approval.approval_timeout_seconds", lambda: 300)
         text = _format_exec_approval_fallback("rm -rf /", "recursive delete", "/")
@@ -120,4 +143,3 @@ class TestApprovalTextFallbackContract:
         assert "5 minutes" in text
         for step in ("`/approve`", "`/approve session`", "`/approve always`", "`/deny`"):
             assert step in text
-
