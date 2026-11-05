@@ -184,10 +184,295 @@ def test_ambiguous_secret_sequences_do_not_leak_before_consent_rpc_and_cost(
 
 @pytest.mark.parametrize("name", ["auth", "oauth", "auth_check"])
 def test_generic_auth_payload_sequence_control_stays_visible(name):
-    args = {"name": name, "payload": {"target": "/prod", "operation": "delete"}}
+    args = {
+        "name": name,
+        "payload": {
+            "target": "/prod",
+            "operation": "delete",
+            "author": "operator@example.test",
+            "public_key": "ssh-ed25519 AAAA-public",
+        },
+    }
     preview = _mcp_handlers._format_trust_gate_arguments(args)
     assert preview is not None
     assert json.loads(preview) == args
+
+
+@pytest.mark.parametrize(
+    ("name", "field", "sequence"),
+    [
+        (name, field, sequence)
+        for name in ("auth", "oauth", "auth_check")
+        for field in ("payload", "data", "content", "body")
+        for sequence in (
+            ["synthetic_secret_one", "synthetic_secret_two"],
+            ("synthetic_secret_one", "synthetic_secret_two"),
+        )
+    ],
+    ids=lambda value: value if isinstance(value, str) else type(value).__name__,
+)
+def test_generic_auth_sequences_fail_closed_before_consent_rpc_and_cost(
+    fake_session, name, field, sequence
+):
+    from tools import mcp_tool_costs
+
+    args = {"name": name, field: sequence}
+    _set_trust("srv", "untrusted")
+    policy = mcp_tool_costs.parse_cost_policy({"write_file": 40}, 100, None, where="test MCP server")
+
+    assert _mcp_handlers._format_trust_gate_arguments(args) is None
+    assert _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args) is None
+    with patch.dict(mcp_tool._server_cost_policies, {"srv": policy}, clear=True), \
+         patch.dict(mcp_tool_costs._spent, {}, clear=True), \
+         patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    consent.assert_not_called()
+    fake_session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert "synthetic_secret_" not in raw
+    assert "error" in json.loads(raw)
+
+
+@pytest.mark.parametrize("name", ["auth", "oauth", "auth_check"])
+def test_generic_auth_dict_payload_remains_visible_and_executable(fake_session, name):
+    from tools import mcp_tool_costs
+
+    args = {
+        "name": name,
+        "payload": {
+            "target": "/prod",
+            "operation": "delete",
+            "author": "operator@example.test",
+            "public_key": "ssh-ed25519 AAAA-public",
+        },
+    }
+    _set_trust("srv", "untrusted")
+    preview = _mcp_handlers._format_trust_gate_arguments(args)
+    assert preview is not None
+    assert json.loads(preview) == args
+
+    policy = mcp_tool_costs.parse_cost_policy({"write_file": 40}, 100, None, where="test MCP server")
+    with patch.dict(mcp_tool._server_cost_policies, {"srv": policy}, clear=True), \
+         patch.dict(mcp_tool_costs._spent, {}, clear=True), \
+         patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    assert "error" not in json.loads(raw)
+    consent.assert_called_once()
+    assert fake_session.call_tool.call_args.kwargs["arguments"] == args
+
+
+def test_url_credentials_in_object_key_fail_closed_before_consent_rpc_and_cost(fake_session):
+    from tools import mcp_tool_costs
+
+    secret = "synthetic_key_password"
+    args = {f"https://user:{secret}@example.test/path": "safe"}
+    _set_trust("srv", "untrusted")
+    policy = mcp_tool_costs.parse_cost_policy({"write_file": 40}, 100, None, where="test MCP server")
+
+    previews = (
+        _mcp_handlers._format_trust_gate_arguments(args),
+        _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args),
+    )
+    assert previews == (None, None)
+    assert all(secret not in (preview or "") for preview in previews)
+    with patch.dict(mcp_tool._server_cost_policies, {"srv": policy}, clear=True), \
+         patch.dict(mcp_tool_costs._spent, {}, clear=True), \
+         patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    consent.assert_not_called()
+    fake_session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert secret not in raw
+    assert "error" in json.loads(raw)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "curl https://u:zq81xk27@h.test/x",
+        "url=https://u:zq81xk27@h.test/x",
+        "<https://u:zq81xk27@h.test/x>",
+        "//u:zq81xk27@h.test/x",
+    ],
+    ids=["command-prefix", "assignment-prefix", "angle-wrapper", "scheme-relative"],
+)
+def test_wrapped_url_credentials_in_object_keys_fail_closed_before_consent_rpc_and_cost(
+    fake_session, key
+):
+    from tools import mcp_tool_costs
+
+    args = {key: 1}
+    _set_trust("srv", "untrusted")
+    policy = mcp_tool_costs.parse_cost_policy({"write_file": 40}, 100, None, where="test MCP server")
+
+    previews = (
+        _mcp_handlers._format_trust_gate_arguments(args),
+        _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args),
+    )
+    assert previews == (None, None)
+    with patch.dict(mcp_tool._server_cost_policies, {"srv": policy}, clear=True), \
+         patch.dict(mcp_tool_costs._spent, {}, clear=True), \
+         patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    consent.assert_not_called()
+    fake_session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert "zq81xk27" not in raw
+    assert "error" in json.loads(raw)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"headers": {"a": "token", "b": "zq81xk27"}},
+        {"headers": {"a": "api-key", "b": "zq81xk27"}},
+        {"headers": {"a": "private-token", "b": "zq81xk27"}},
+        {"headers": {"a": "session", "b": "zq81xk27"}},
+        {"headers": {"a": "Cookie ", "b": "zq81xk27"}},
+        {"request": {"0": "Cookie", "1": "zq81xk27"}},
+        {"x": {"0": "Authorization", "1": "Bearer zq81xk27"}},
+        {"opts": {"0": "X-Api-Key", "1": "zq81xk27"}},
+        {"headers": {"second": "zq81xk27", "first": "Cookie"}},
+        {"x": {"second": "zq81xk27", "first": "Cookie"}},
+        {"x": {"0": "a", "1": "Cookie", "2": "zq81xk27"}},
+        {"x": {"1": "a", "2": "Cookie", "3": "zq81xk27"}},
+    ],
+    ids=[
+        "headers-token",
+        "headers-api-key",
+        "headers-private-token",
+        "headers-session",
+        "headers-cookie-whitespace",
+        "request-cookie-numeric",
+        "nested-authorization-numeric",
+        "nested-api-key-numeric",
+        "reversed-ordinal-header",
+        "reversed-ordinal-nested",
+        "numeric-header-odd-offset-zero",
+        "numeric-header-odd-offset-one",
+    ],
+)
+def test_sequential_header_maps_fail_closed_before_consent_rpc_and_cost(fake_session, args):
+    from tools import mcp_tool_costs
+
+    _set_trust("srv", "untrusted")
+    policy = mcp_tool_costs.parse_cost_policy({"write_file": 40}, 100, None, where="test MCP server")
+    assert _mcp_handlers._format_trust_gate_arguments(args) is None
+    assert _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args) is None
+    with patch.dict(mcp_tool._server_cost_policies, {"srv": policy}, clear=True), \
+         patch.dict(mcp_tool_costs._spent, {}, clear=True), \
+         patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    consent.assert_not_called()
+    fake_session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert "zq81xk27" not in raw
+    assert "error" in json.loads(raw)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"x": {"1": "zq81xk27", "0": "Cookie"}},
+        {"headers": {"1": "zq81xk27", "0": "Cookie"}},
+    ],
+    ids=["reversed-x-sequence", "reversed-headers-sequence"],
+)
+def test_reversed_numeric_header_sequences_fail_closed_before_consent_rpc_and_cost(
+    fake_session, args
+):
+    from tools import mcp_tool_costs
+
+    _set_trust("srv", "untrusted")
+    policy = mcp_tool_costs.parse_cost_policy({"write_file": 40}, 100, None, where="test MCP server")
+    assert _mcp_handlers._format_trust_gate_arguments(args) is None
+    assert _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args) is None
+    with patch.dict(mcp_tool._server_cost_policies, {"srv": policy}, clear=True), \
+         patch.dict(mcp_tool_costs._spent, {}, clear=True), \
+         patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    consent.assert_not_called()
+    fake_session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert "zq81xk27" not in raw
+    assert "error" in json.loads(raw)
+    assert list(next(iter(args.values()))) == ["1", "0"]
+
+
+@pytest.mark.parametrize(
+    ("args", "expected_keys"),
+    [
+        ({"x": {"1": "safe-value", "0": "label"}}, ["1", "0"]),
+        ({"headers": {"20": "application/json", "10": "Content-Type"}}, ["20", "10"]),
+        ({"headers": {"second": "application/json", "first": "Content-Type"}}, ["second", "first"]),
+    ],
+    ids=["reversed-arbitrary-numeric-map", "noncontiguous-header-sequence", "reversed-ordinal-map"],
+)
+def test_benign_numeric_maps_remain_previewable_without_mutation(args, expected_keys):
+    preview = _mcp_handlers._format_trust_gate_arguments(args)
+
+    assert preview is not None
+    assert json.loads(preview) == args
+    assert list(next(iter(args.values()))) == expected_keys
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"headers": {"Accept": "application/json", "Content-Type": "application/json"}},
+        {"headers": {"name": "Accept", "value": "application/json"}},
+        {"name": "auth_check", "payload": {"target": "/prod", "operation": "delete"}},
+    ],
+    ids=["ordinary-header-map", "ordinary-header-pair", "generic-operation-control"],
+)
+def test_noncredential_header_maps_and_operation_controls_remain_previewable(args):
+    cli_preview = _mcp_handlers._format_trust_gate_arguments(args)
+    gateway_preview = _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args)
+
+    assert cli_preview is not None
+    assert gateway_preview is not None
+    assert json.loads(cli_preview) == args
+
+
+@pytest.mark.parametrize(
+    ("args", "secrets"),
+    [
+        (
+            {"headers": {"0": "Cookie", "1": "synthetic_cookie_secret", "2": "Authorization", "3": "synthetic_auth_secret"}},
+            ("synthetic_cookie_secret", "synthetic_auth_secret"),
+        ),
+        (
+            {"headers": {"first": "Cookie", "second": "synthetic_cookie_secret"}},
+            ("synthetic_cookie_secret",),
+        ),
+    ],
+    ids=["numeric-header-map", "ordinal-header-map"],
+)
+def test_ambiguous_object_header_sequences_fail_closed_before_consent_rpc_and_cost(
+    fake_session, args, secrets
+):
+    from tools import mcp_tool_costs
+
+    _set_trust("srv", "untrusted")
+    policy = mcp_tool_costs.parse_cost_policy({"write_file": 40}, 100, None, where="test MCP server")
+    assert _mcp_handlers._format_trust_gate_arguments(args) is None
+    assert _mcp_handlers._format_gateway_trust_gate_command("srv", "write_file", args) is None
+    with patch.dict(mcp_tool._server_cost_policies, {"srv": policy}, clear=True), \
+         patch.dict(mcp_tool_costs._spent, {}, clear=True), \
+         patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+        raw = _mcp_handlers._make_tool_handler("srv", "write_file", 30.0)(args)
+
+    consent.assert_not_called()
+    fake_session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert all(secret not in raw for secret in secrets)
+    assert "error" in json.loads(raw)
 
 
 @pytest.mark.parametrize(

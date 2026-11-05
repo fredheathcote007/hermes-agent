@@ -571,6 +571,7 @@ def _validate_preview_payload(value: Any, *, _budget=None, _depth: int = 0) -> N
             for key, item in value.items():
                 if not isinstance(key, str) or len(key) > _TRUST_GATE_ARGUMENTS_MAX_SCALAR_CHARS:
                     raise ValueError("invalid preview key")
+                _reject_url_credentials_in_key(key)
                 _secret_name_view(key)
                 _reject_unstructured_secret_headers(key)
                 _validate_preview_payload(item, _budget=budget, _depth=_depth + 1)
@@ -610,6 +611,79 @@ def _is_header_collection_key(key: Any) -> bool:
         "header", "headers", "headerlist", "headerblock", "headercollection", "headerpairs",
         "requestheaders", "extraheaders", "httpheaders", "pairs",
     }
+
+
+def _reject_url_credentials_in_key(key: str) -> None:
+    """Reject keys the shared redactor would change instead of renaming controls."""
+    from agent.redact import redact_sensitive_text
+
+    redacted = redact_sensitive_text(key, force=True, redact_url_credentials=True)
+    if not isinstance(redacted, str) or redacted != key:
+        raise ValueError("URL credentials in preview key")
+
+
+def _is_header_sequence_mapping(value: dict) -> bool:
+    """Whether mapping keys explicitly preserve positional sequence semantics."""
+    keys = tuple(value)
+    if len(keys) < 2:
+        return False
+    if all(isinstance(key, str) and key.isdecimal() for key in keys):
+        return True
+    ordinal_keys = ("first", "second", "third", "fourth", "fifth")
+    return all(
+        isinstance(key, str) and key.casefold() in ordinal_keys
+        for key in keys
+    )
+
+
+def _is_ambiguous_header_label(
+    value: Any, *, header_context: bool, sequence_context: bool
+) -> bool:
+    """Recognize credential labels without treating arbitrary session text as a label."""
+    if not isinstance(value, str):
+        return False
+    if _is_secret_argument_name(value):
+        return True
+    return (header_context or sequence_context) and _compact_secret_name(value) == "session"
+
+
+def _reject_ambiguous_header_mapping(value: dict, *, header_context: bool) -> None:
+    """Reject object-shaped header sequences whose labels are only values."""
+    sequence_context = _is_header_sequence_mapping(value)
+    if not header_context and not sequence_context:
+        return
+    if (
+        any(_is_header_name_alias(key) for key in value)
+        or any(_is_secret_argument_name(key) for key in value)
+    ):
+        return
+    if sequence_context and all(isinstance(key, str) and key.isdecimal() for key in value):
+        items = tuple(
+            item
+            for _index, item in sorted(
+                ((int(key), item) for key, item in value.items()),
+                key=lambda pair: pair[0],
+            )
+        )
+    elif sequence_context:
+        ordinal_keys = ("first", "second", "third", "fourth", "fifth")
+        items = tuple(
+            item
+            for _index, item in sorted(
+                ((ordinal_keys.index(key.casefold()), item) for key, item in value.items()),
+                key=lambda pair: pair[0],
+            )
+        )
+    else:
+        items = tuple(value.values())
+    indices = range(len(items)) if sequence_context else range(0, len(items) - 1, 2)
+    if any(
+        _is_ambiguous_header_label(
+            items[index], header_context=header_context, sequence_context=sequence_context
+        )
+        for index in indices
+    ):
+        raise ValueError("ambiguous header mapping")
 
 
 def _looks_like_header_name(value: Any) -> bool:
@@ -687,6 +761,7 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
             raise ValueError("cyclic preview value")
         budget.active_ids.add(identity)
         try:
+            _reject_ambiguous_header_mapping(value, header_context=_header_context)
             # Header objects may use mixed-case Name/Value or key/value pairs.
             # If several candidate labels are present, any credential-shaped label
             # makes the associated value sensitive; no arbitrary first-key wins.
@@ -727,9 +802,11 @@ def _mask_secret_argument_fields(value: Any, *, _budget=None, _depth: int = 0,
                 )
                 if (
                     header_is_secret
-                    and ambiguous_header_values_are_credential_data
                     and _compact_secret_name(key) in _AMBIGUOUS_HEADER_VALUE_ALIASES
-                    and isinstance(item, (dict, list, tuple))
+                    and (
+                        isinstance(item, (list, tuple))
+                        or (ambiguous_header_values_are_credential_data and isinstance(item, dict))
+                    )
                 ):
                     raise ValueError("ambiguous credential sequence")
                 masked_item = _mask_secret_argument_fields(
