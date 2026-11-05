@@ -19,6 +19,8 @@
 
 آپ اپنی مرضی کا کوئی بھی ماڈل استعمال کر سکتے ہیں — [Nous Portal](https://portal.nousresearch.com)، [OpenRouter](https://openrouter.ai) (200 سے زائد ماڈلز)، [NovitaAI](https://novita.ai) (ماڈل API، ایجنٹ سینڈ باکس، اور GPU کلاؤڈ کے لیے اے آئی مقامی کلاؤڈ)، [NVIDIA NIM](https://build.nvidia.com) (Nemotron)، [Xiaomi MiMo](https://platform.xiaomimimo.com)، [z.ai/GLM](https://z.ai)، [Kimi/Moonshot](https://platform.moonshot.ai)، [MiniMax](https://www.minimax.io)، [Hugging Face](https://huggingface.co)، OpenAI، یا اپنا حسب ضرورت اینڈ پوائنٹ (endpoint) استعمال کریں۔ ماڈل تبدیل کرنے کے لیے صرف `hermes model` استعمال کریں — کسی کوڈ کو تبدیل کرنے کی ضرورت نہیں، کوئی پابندی نہیں۔
 
+یہ عوامی ریپوزٹری [Nous Research Hermes Agent](https://github.com/NousResearch/hermes-agent) کے اصل منصوبے کا کمیونٹی کے زیرِ انتظام fork ہے۔ مسائل، pull requests اور اس fork سے متعلق سکیورٹی رپورٹس کے لیے [اسی fork کی ریپوزٹری](https://github.com/fredheathcote007/hermes-agent) استعمال کریں؛ اصل منصوبے کی نسبت برقرار ہے۔
+
 <table>
 <tr><td><b>حقیقی ٹرمینل انٹرفیس</b></td><td>مکمل TUI جس میں ملٹی لائن ایڈیٹنگ، سلیش-کمانڈ آٹو کمپلیٹ، بات چیت کی ہسٹری، انٹرپٹ اور ری ڈائریکٹ، اور سٹریمنگ ٹول آؤٹ پٹ شامل ہے۔</td></tr>
 <tr><td><b>یہ وہاں موجود ہے جہاں آپ ہیں</b></td><td>ٹیلی گرام، ڈسکارڈ (Discord)، سلیک (Slack)، واٹس ایپ (WhatsApp)، سگنل (Signal)، اور CLI — سب ایک ہی گیٹ وے پروسیس سے کام کرتے ہیں۔ وائس میمو (Voice memo) ٹرانسکرپشن، کراس پلیٹ فارم بات چیت کا تسلسل۔</td></tr>
@@ -45,7 +47,7 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 
 ### ونڈوز (نیٹو، پاور شیل)
 
-> **توجہ فرمائیں:** مقامی ونڈوز (Native Windows) پر ہرمیس بغیر WSL کے چلتا ہے — CLI، گیٹ وے، TUI، اور ٹولز سب مقامی طور پر کام کرتے ہیں۔ اگر آپ WSL2 استعمال کرنا پسند کرتے ہیں، تو اوپر دی گئی لینکس/میک او ایس کی کمانڈ وہاں بھی کام کرے گی۔ کوئی مسئلہ نظر آیا؟ براہ کرم [مسائل (issues) درج کریں](https://github.com/NousResearch/hermes-agent/issues)۔
+> **توجہ فرمائیں:** مقامی ونڈوز (Native Windows) پر ہرمیس بغیر WSL کے چلتا ہے — CLI، گیٹ وے، TUI، اور ٹولز سب مقامی طور پر کام کرتے ہیں۔ اگر آپ WSL2 استعمال کرنا پسند کرتے ہیں، تو اوپر دی گئی لینکس/میک او ایس کی کمانڈ وہاں بھی کام کرے گی۔ کوئی مسئلہ نظر آیا؟ براہ کرم [مسائل (issues) درج کریں](https://github.com/fredheathcote007/hermes-agent/issues)۔
 
 اسے پاور شیل (PowerShell) میں چلائیں:
 
@@ -168,7 +170,7 @@ hermes setup --portal
 | [کرون (Cron) شیڈیولنگ](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron)         | پلیٹ فارم ڈیلیوری کے ساتھ شیڈول کیے گئے کام                 |
 | [کانٹیکسٹ (Context) فائلز](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files)| پروجیکٹ کا سیاق و سباق (context) جو ہر بات چیت پر اثر انداز ہوتا ہے |
 | [آرکیٹیکچر (Architecture)](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture) | پروجیکٹ کا ڈھانچہ، ایجنٹ لوپ، اہم کلاسز                    |
-| [تعاون (Contributing)](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing)     | ڈیویلپمنٹ سیٹ اپ، PR کا طریقہ کار، کوڈنگ کا انداز          |
+| [اس fork کے لیے تعاون کی گائیڈ (Contributing)](CONTRIBUTING.md) · [upstream Docusaurus گائیڈ](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) | ڈیویلپمنٹ سیٹ اپ، PR کا طریقہ کار، کوڈنگ کا انداز          |
 | [CLI حوالہ جات (Reference)](https://hermes-agent.nousresearch.com/docs/reference/cli-commands)      | تمام کمانڈز اور فلیگز (flags)                              |
 | [انوائرمنٹ ویری ایبلز](https://hermes-agent.nousresearch.com/docs/reference/environment-variables)  | مکمل انوائرمنٹ ویری ایبل حوالہ جات                         |
 
@@ -212,7 +214,7 @@ hermes claw migrate --overwrite  # موجودہ متصادم فائلوں کو �
 
 ## تعاون کریں (Contributing)
 
-ہم آپ کے تعاون کا خیرمقدم کرتے ہیں! ڈیویلپمنٹ سیٹ اپ، کوڈ کے انداز اور PR کے طریقہ کار کے لیے براہ کرم ہماری [Contributing گائیڈ](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) دیکھیں۔
+ہم آپ کے تعاون کا خیرمقدم کرتے ہیں! اس fork کے لیے مقامی [Contributing گائیڈ](CONTRIBUTING.md) سے آغاز کریں اور تبدیلیاں [اس fork کی Pull Requests](https://github.com/fredheathcote007/hermes-agent/pulls) کے ذریعے جمع کریں۔ upstream [Docusaurus تعاون گائیڈ](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) اصل منصوبے کے لیے عمومی ڈیویلپمنٹ حوالہ کے طور پر دستیاب ہے۔
 
 PM اور Python 3.14 کے ٹیسٹ ماحول اور تصدیقی کمانڈز کے لیے
 [Development Setup](CONTRIBUTING.md#development-setup) دیکھیں۔
@@ -223,7 +225,7 @@ PM اور Python 3.14 کے ٹیسٹ ماحول اور تصدیقی کمانڈز 
 
 - 💬 [ڈسکارڈ (Discord)](https://discord.gg/NousResearch)
 - 📚 [سکلز ہب (Skills Hub)](https://agentskills.io)
-- 🐛 [مسائل (Issues)](https://github.com/NousResearch/hermes-agent/issues)
+- 🐛 [مسائل (Issues)](https://github.com/fredheathcote007/hermes-agent/issues)
 - 🔌 [computer-use-linux](https://github.com/avifenesh/computer-use-linux) — ہرمیس اور دیگر MCP ہوسٹس کے لیے لینکس (Linux) ڈیسک ٹاپ کنٹرول MCP سرور، جس میں AT-SPI ایکسیسیبلٹی ٹریز، Wayland/X11 ان پٹ، سکرین شاٹس، اور کمپوزیٹر ونڈو ٹارگیٹنگ شامل ہے۔
 - 🔌 [HermesClaw](https://github.com/AaronWong1999/hermesclaw) — کمیونٹی وی چیٹ (WeChat) برج: ہرمیس ایجنٹ اور OpenClaw کو ایک ہی وی چیٹ اکاؤنٹ پر چلائیں۔
 

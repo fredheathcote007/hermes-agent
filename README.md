@@ -20,6 +20,8 @@
 
 Use any model you want — [Nous Portal](https://portal.nousresearch.com), OpenRouter, OpenAI, your own endpoint, and [many others](https://hermes-agent.nousresearch.com/docs/integrations/providers). Switch with `hermes model` — no code changes, no lock-in.
 
+This public repository is a community-maintained fork of the original [Nous Research Hermes Agent](https://github.com/NousResearch/hermes-agent). For issues, pull requests, and fork-specific security reports, use [this fork's repository](https://github.com/fredheathcote007/hermes-agent); the original project's attribution remains unchanged.
+
 <table>
 <tr><td><b>A real terminal interface</b></td><td>Full TUI with multiline editing, slash-command autocomplete, conversation history, interrupt-and-redirect, and streaming tool output.</td></tr>
 <tr><td><b>Lives where you do</b></td><td>Telegram, Discord, Slack, WhatsApp, Signal, and CLI — all from a single gateway process. Voice memo transcription, cross-platform conversation continuity.</td></tr>
@@ -42,7 +44,7 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 
 ### Windows (native, PowerShell)
 
-> **Heads up:** Native Windows runs Hermes without WSL — CLI, gateway, TUI, and tools all work natively. If you'd rather use WSL2, the Linux/macOS one-liner above works there too. Found a bug? Please [file issues](https://github.com/NousResearch/hermes-agent/issues).
+> **Heads up:** Native Windows runs Hermes without WSL — CLI, gateway, TUI, and tools all work natively. If you'd rather use WSL2, the Linux/macOS one-liner above works there too. Found a bug? Please [file issues](https://github.com/fredheathcote007/hermes-agent/issues).
 
 Run this in PowerShell:
 
@@ -180,7 +182,7 @@ All documentation lives at **[hermes-agent.nousresearch.com/docs](https://hermes
 | [Cron Scheduling](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron)              | Scheduled tasks with platform delivery                     |
 | [Context Files](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files)       | Project context that shapes every conversation             |
 | [Architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture)             | Project structure, agent loop, key classes                 |
-| [Contributing](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing)             | Development setup, PR process, code style                  |
+| [Contributing for this fork](CONTRIBUTING.md) · [upstream Docusaurus guide](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) | Development setup, PR process, code style                  |
 | [CLI Reference](https://hermes-agent.nousresearch.com/docs/reference/cli-commands)                  | All commands and flags                                     |
 | [Environment Variables](https://hermes-agent.nousresearch.com/docs/reference/environment-variables) | Complete env var reference                                 |
 
@@ -218,7 +220,7 @@ See `hermes claw migrate --help` for all options, or use the `openclaw-migration
 
 ## Contributing
 
-We welcome contributions! See the [Contributing Guide](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) for development setup, code style, and PR process.
+We welcome contributions! For this fork, start with the local [Contributing Guide](CONTRIBUTING.md) and submit changes through [this fork's Pull Requests](https://github.com/fredheathcote007/hermes-agent/pulls). The upstream [Docusaurus contribution guide](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) remains available as general development reference for the original project.
 
 Start with the [PM developer workflow](website/docs/reference/package-management.md#developer-workflow)
 for activation, daily use, dependency changes, and leaving the environment.
@@ -230,7 +232,7 @@ for activation, daily use, dependency changes, and leaving the environment.
 
 - 💬 [Discord](https://discord.gg/NousResearch)
 - 📚 [Skills Hub](https://agentskills.io)
-- 🐛 [Issues](https://github.com/NousResearch/hermes-agent/issues)
+- 🐛 [Issues](https://github.com/fredheathcote007/hermes-agent/issues)
 - 🔌 [computer-use-linux](https://github.com/avifenesh/computer-use-linux) — Linux desktop-control MCP server for Hermes and other MCP hosts, with AT-SPI accessibility trees, Wayland/X11 input, screenshots, and compositor window targeting.
 - 🔌 [HermesClaw](https://github.com/AaronWong1999/hermesclaw) — Community WeChat bridge: Run Hermes Agent and OpenClaw on the same WeChat account.
 

@@ -6,9 +6,13 @@ alcance para los informes de vulnerabilidades.
 
 ## 1. Reportar una Vulnerabilidad
 
-Reporta de forma privada a través de [GitHub Security Advisories](https://github.com/NousResearch/hermes-agent/security/advisories/new)
-o **security@nousresearch.com**. No abras issues públicos para
-vulnerabilidades de seguridad. **Hermes Agent no opera un programa de
+Para una vulnerabilidad en este fork, repórtala de forma privada mediante
+los [Security Advisories de GitHub del fork](https://github.com/fredheathcote007/hermes-agent/security/advisories/new).
+No abras un issue o pull request público para una vulnerabilidad de seguridad.
+Este fork no supervisa el buzón de seguridad del upstream. Si el informe también
+afecta al [Hermes Agent de Nous Research](https://github.com/NousResearch/hermes-agent),
+sigue por separado las instrucciones de reporte del proyecto upstream después de
+usar el canal privado de este fork. **Hermes Agent no opera un programa de
 recompensas por errores.**
 
 Un informe útil incluye:
@@ -320,7 +324,8 @@ La decisión de fortalecimiento más importante es hacer coincidir el aislamient
 
 - **Ventana de divulgación coordinada:** 90 días desde el informe, o hasta que se
   publique una corrección, lo que ocurra primero.
-- **Canal:** el hilo GHSA o correspondencia por email con
-  security@nousresearch.com.
+- **Canal:** el hilo GHSA del fork. Los informes que afecten únicamente al
+  proyecto original upstream pertenecen al canal upstream descrito por su
+  [política de seguridad](https://github.com/NousResearch/hermes-agent/blob/main/SECURITY.md).
 - **Crédito:** los reportadores reciben crédito en las notas de versión a menos que
   se solicite anonimato.

@@ -8,10 +8,12 @@ body:
       value: |
         Thanks for reporting a bug! Please fill out the sections below so we can reproduce and fix it quickly.
 
+        **Privacy check:** Redact API keys, tokens, passwords, private logs, memory files, session transcripts, local paths, hostnames, IP addresses, and other network details before posting. Never share `.env`, `auth.json`, `state.db`, or raw logs. Inspect any `hermes debug share` output first; prefer `hermes debug share --local` and paste only a sanitized excerpt.
+
         **Before submitting**, please:
-        - [ ] Search [existing issues](https://github.com/NousResearch/hermes-agent/issues) to avoid duplicates
+        - [ ] Search [existing issues](https://github.com/fredheathcote007/hermes-agent/issues) to avoid duplicates
         - [ ] Update to the latest version (`hermes update`) and confirm the bug still exists
-        - [ ] Run `hermes debug share` and paste the links below (see Debug Report section)
+        - [ ] Prepare a sanitized debug report or excerpt (see Debug Report section)
 
   - type: textarea
     id: description
@@ -88,8 +90,9 @@ body:
     attributes:
       label: Debug Report
       description: |
-        Run `hermes debug share` from your terminal and paste the links it prints here.
-        This uploads your system info, config, and recent logs to a paste service automatically.
+        Run `hermes debug share` from your terminal only after reviewing its output and paste sanitized links here.
+        It may upload system info, config, and recent logs to a paste service automatically. Prefer `hermes debug share --local` and paste only redacted excerpts.
+        Never include API keys, tokens, passwords, private logs, memory files, session transcripts, local paths, hostnames, IP addresses, or other network details.
 
         If you're in an interactive chat session, you can also use the `/debug` slash command — it does the same thing.
 
@@ -131,7 +134,8 @@ body:
       label: Additional Logs / Traceback (optional)
       description: |
         The debug report above covers most logs. Use this field for any extra error output, 
-        tracebacks, or screenshots not captured by `hermes debug share`.
+        tracebacks, or screenshots not captured by `hermes debug share`. Redact secrets, private logs,
+        memory content, local paths, hostnames, IP addresses, and other network details first.
       render: shell
 
   - type: textarea

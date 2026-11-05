@@ -17,6 +17,8 @@
 
 支持任意模型——[Nous Portal](https://portal.nousresearch.com)、[OpenRouter](https://openrouter.ai)（200+ 模型）、[NVIDIA NIM](https://build.nvidia.com)（Nemotron）、[小米 MiMo](https://platform.xiaomimimo.com)、[z.ai/GLM](https://z.ai)、[Kimi/Moonshot](https://platform.moonshot.ai)、[MiniMax](https://www.minimax.io)、[Hugging Face](https://huggingface.co)、OpenAI，或自定义端点。使用 `hermes model` 即可切换——无需改代码，无锁定。
 
+本公开仓库是原始 [Nous Research Hermes Agent](https://github.com/NousResearch/hermes-agent) 项目的社区维护 fork。有关问题、Pull Request 和本 fork 的安全报告，请使用[本 fork 的仓库](https://github.com/fredheathcote007/hermes-agent)；原项目的署名和归属保持不变。
+
 <table>
 <tr><td><b>真正的终端界面</b></td><td>完整的 TUI，支持多行编辑、斜杠命令自动补全、对话历史、中断重定向和流式工具输出。</td></tr>
 <tr><td><b>随你所在</b></td><td>Telegram、Discord、Slack、WhatsApp、Signal 和 CLI——全部从单个网关进程运行。语音备忘录转写、跨平台对话连续性。</td></tr>
@@ -129,7 +131,7 @@ Hermes 有两种入口：用 `hermes` 启动终端 UI，或运行网关从 Teleg
 | [定时调度](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron) | 定时任务与平台投递 |
 | [上下文文件](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files) | 影响每次对话的项目上下文 |
 | [架构](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture) | 项目结构、代理循环、关键类 |
-| [贡献](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) | 开发设置、PR 流程、代码风格 |
+| [本 fork 的贡献指南](CONTRIBUTING.md) · [上游 Docusaurus 指南](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) | 开发设置、PR 流程、代码风格 |
 | [CLI 参考](https://hermes-agent.nousresearch.com/docs/reference/cli-commands) | 所有命令和标志 |
 | [环境变量](https://hermes-agent.nousresearch.com/docs/reference/environment-variables) | 完整环境变量参考 |
 
@@ -166,7 +168,7 @@ hermes claw migrate --overwrite  # 覆盖已有冲突
 
 ## 贡献
 
-欢迎贡献！请参阅 [贡献指南](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) 了解开发设置、代码风格和 PR 流程。
+欢迎贡献！请先阅读本 fork 的[贡献指南](CONTRIBUTING.md)，并在[本 fork 的 Pull Requests](https://github.com/fredheathcote007/hermes-agent/pulls)提交更改。上游的 [Docusaurus 贡献指南](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing)仅作为原始项目的通用开发参考。
 
 PM 引导、Python 3.14 测试环境和规范验证命令见
 [开发环境配置](CONTRIBUTING.md#development-setup)。
@@ -177,8 +179,8 @@ PM 引导、Python 3.14 测试环境和规范验证命令见
 
 - 💬 [Discord](https://discord.gg/NousResearch)
 - 📚 [技能中心](https://agentskills.io)
-- 🐛 [问题反馈](https://github.com/NousResearch/hermes-agent/issues)
-- 💡 [讨论区](https://github.com/NousResearch/hermes-agent/discussions)
+- 🐛 [问题反馈](https://github.com/fredheathcote007/hermes-agent/issues)
+- 💡 设计提案和架构讨论：本 fork 未启用 GitHub Discussions，请使用 [Nous Research Discord](https://discord.gg/NousResearch)
 - 🔌 [HermesClaw](https://github.com/AaronWong1999/hermesclaw) — 社区微信桥接：在同一微信账号上运行 Hermes Agent 和 OpenClaw。
 
 ---

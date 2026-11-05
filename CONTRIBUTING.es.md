@@ -2,6 +2,8 @@
 
 ¡Gracias por contribuir a Hermes Agent! Esta guía cubre todo lo que necesitas: configurar tu entorno de desarrollo, entender la arquitectura, decidir qué construir y conseguir que tu PR sea aceptado.
 
+Este repositorio es el fork público [fredheathcote007/hermes-agent](https://github.com/fredheathcote007/hermes-agent) del [proyecto original de Hermes Agent de Nous Research](https://github.com/NousResearch/hermes-agent). La atribución del proyecto original permanece intacta; usa este fork para issues, pull requests y reportes de seguridad específicos del fork.
+
 ---
 
 ## Prioridades de Contribución
@@ -566,18 +568,23 @@ test(tools): añadir tests unitarios para file_operations
 
 ## Reportar Issues
 
-- Usa [GitHub Issues](https://github.com/NousResearch/hermes-agent/issues)
-- Incluye: SO, versión de Python, versión de Hermes (`hermes --version`), traza de error completa
+- Usa [GitHub Issues](https://github.com/fredheathcote007/hermes-agent/issues)
+- Incluye: SO, versión de Python, versión de Hermes (`hermes --version`) y una traza de error redactada
 - Incluye pasos para reproducir
 - Verifica los issues existentes antes de crear duplicados
-- Para vulnerabilidades de seguridad, por favor reporta de forma privada
+- No publiques claves API, tokens, contraseñas, logs privados, archivos de memoria, transcripciones de sesiones, rutas locales, nombres de host, direcciones IP ni otros detalles de red. Nunca adjuntes `.env`, `auth.json`, `state.db` ni logs sin revisar y sanitizar.
+- Para vulnerabilidades de este fork, reporta de forma privada mediante los [Security Advisories del fork](https://github.com/fredheathcote007/hermes-agent/security/advisories/new), no en un issue o PR público. Consulta [SECURITY.md](SECURITY.md) para conocer el alcance y la distinción con el upstream.
+
+## Higiene de contribuciones e informes comunitarios
+
+Al compartir una reproducción, captura de pantalla, registro o informe de depuración, proporciona el fragmento sanitizado más pequeño que demuestre el problema. Elimina claves API y otras credenciales, logs privados, archivos de memoria, transcripciones de sesiones, rutas del sistema local, nombres de host, direcciones IP y detalles de topología o conexiones de red. Prefiere diagnósticos locales y redactados a las cargas públicas, y usa el canal privado de Security Advisories si sospechas de una vulnerabilidad.
 
 ---
 
 ## Comunidad
 
 - **Discord**: [discord.gg/NousResearch](https://discord.gg/NousResearch) — para preguntas, mostrar proyectos y compartir habilidades
-- **GitHub Discussions**: Para propuestas de diseño y discusiones de arquitectura
+- **Propuestas de diseño y discusiones de arquitectura**: este fork no tiene habilitado GitHub Discussions; usa el [Discord de Nous Research](https://discord.gg/NousResearch)
 - **Skills Hub**: Sube habilidades especializadas a un registro y compártelas con la comunidad
 
 ---
