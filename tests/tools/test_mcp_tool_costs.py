@@ -81,8 +81,9 @@ def test_untrusted_prompt_names_cost_and_running_total_and_declines_add_nothing(
     assert "Costs 5-20 credits (per item). This chat has used about 40 credits on 'srv' (limit 100)." in asked[0]
     # An undeclared tool on a costed server keeps main's exact prompt.
     _, asked = _call("free_status")
-    assert asked == ["MCP tool 'free_status' on UNTRUSTED server 'srv' wants to run. This untrusted server tool is "
-                     "treated as potentially mutating and may modify external state."]
+    assert asked[0].startswith("MCP tool 'free_status' on UNTRUSTED server 'srv' wants to run. ")
+    assert "This untrusted server tool is treated as potentially mutating and may modify external state." in asked[0]
+    assert "Arguments:\n{}" in asked[0]
     assert session.call_tool.await_count == 3
 
 
@@ -109,6 +110,46 @@ def test_generic_yolo_does_not_bypass_mcp_trust_or_spend_limit(session):
     assert "spend limit is 50 credits" in second["error"]
     assert consent.call_count == 2  # trust approval, then over-limit approval
     assert session.call_tool.await_count == 1
+
+
+def test_oversized_untrusted_costed_call_does_not_prompt_or_book(session):
+    """Preview refusal happens before consent and leaves the cost tally unchanged."""
+    _register({"trust": "untrusted", "tool_costs": {"paid_render": 40}, "spend_limit": 100})
+    token = set_current_session_key("oversized-costed-call")
+    args = {"prefix": "x" * 5_000, "late_mutating_field": "delete-prod"}
+    try:
+        with patch(
+            "tools.approval_prompt.request_elicitation_consent", return_value="accept"
+        ) as consent:
+            result = json.loads(handlers._make_tool_handler("srv", "paid_render", 30.0)(args))
+    finally:
+        reset_current_session_key(token)
+
+    consent.assert_not_called()
+    assert "Reduce the payload" in result["error"]
+    session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+
+
+def test_gateway_oversized_costed_call_does_not_prompt_or_book(session):
+    """The gateway display refusal happens before consent and before cost booking."""
+    from gateway.session_context import clear_session_vars, set_session_vars
+
+    _register({"trust": "untrusted", "tool_costs": {"paid_render": 40}, "spend_limit": 100})
+    session_tokens = set_session_vars(platform="telegram", session_key="gateway-costed-large")
+    token = set_current_session_key("gateway-costed-large")
+    try:
+        args = {"benign_prefix": "x" * 180, "late_mutating_target": "/production/database"}
+        with patch("tools.approval_prompt.request_elicitation_consent", return_value="accept") as consent:
+            result = json.loads(handlers._make_tool_handler("srv", "paid_render", 30.0)(args))
+    finally:
+        reset_current_session_key(token)
+        clear_session_vars(session_tokens)
+
+    consent.assert_not_called()
+    session.call_tool.assert_not_awaited()
+    assert mcp_tool_costs._spent == {}
+    assert "gateway display limit" in result["error"]
 
 
 def test_full_trust_asks_only_past_the_limit_and_unattended_refuses_without_dispatch(session):
