@@ -38,12 +38,23 @@ proof remain open engineering/security decisions.
 
 ### Recommended candidate: two-tier local model
 
-The controller is separately authorized and is the sole receipt authority. It authenticates the
-parent through OS IPC, derives peer identity, validates immutable attempt scope, launches a disposable
-lower-trust executor, independently validates the result, and mints a protected receipt only after
-quiescence and artifact/readback predicates pass. Project-controlled recipes never run under the
-controller identity and never receive controller credentials, receipt-store access, profile secrets,
-or unrestricted egress.
+The protected parent-authority service owns delegated execution intent. Parent-side worker launch is
+a future candidate only; it is not authorized by DEC-009 or the approved service topology. Any launch
+requires separate owner/security approval of the exact launch authority and worker principal, the OS
+privilege/ACL/service plan, and native qualification on Linux and Windows. No parent-side worker launch
+authority is approved or available under the current decisions. The verifier-controller authenticates
+the protected parent and attempt intent, observes
+the actual effect independently, and controls receipt issuance only after applicable proof passes.
+It never launches, performs, or mediates an effect that it certifies. Project-controlled recipes
+never run under either service identity and never receive service credentials, receipt-store access,
+profile secrets, or unrestricted egress.
+
+This is a candidate authority boundary, not evidence that secure launch, independent observation,
+quiescence, or readback is available. Under the current native design and DEC-009, every ordinary or
+worker-writable filesystem effect remains `INCOMPLETE`/manual or requires separately approved
+authoritative external attestation. No controller-created effect or controller readback of its own
+effect can establish success. If parent-controlled restricted launch or independent proof cannot be
+demonstrated, execution is unavailable for trusted verification and the result remains fail closed.
 
 This is the minimum model consistent with DEC-006’s unprivileged-worker threat and DEC-004’s
 independent-proof requirement. It still excludes local root/Administrator compromise and does not
@@ -98,13 +109,15 @@ behavior. The exact design must be independently reviewed and proven on native h
 
 ### Recommended candidate: immutable per-attempt receipt with atomic one-use consumption
 
-Every attempt has a random nonce, parent/session authority, canonical root identity, immutable effect
-and artifact scope, policy/protocol digest, verifier generation, freshness window, and supersession
-link. The controller independently records pre/post artifact object identity and SHA-256 (or an approved
-immutable snapshot/generation proof), process quiescence, and action-specific readback. The protected
-store accepts one exact `(attempt, nonce, authority, generation)` CAS consume; successful consumption
-is terminal. Foreign, stale, replayed, mismatched, malformed, concurrent, or unreadable evidence is
-not success.
+Every attempt has a random nonce, authenticated parent/session authority, canonical root identity,
+immutable effect scope, policy/protocol digest, verifier generation, freshness window, and
+supersession link. The controller may read independently observed actual-effect evidence; any future
+parent-controlled restricted execution and its independent proof must be established before receipt
+issuance is considered. The protected store accepts one exact `(attempt, nonce, authority, generation)`
+CAS consume only after applicable proof; successful consumption is terminal. Foreign, stale, replayed,
+mismatched, malformed, concurrent, unreadable, or unproven evidence is not success. Under the current
+approval, filesystem effects remain `INCOMPLETE`/manual or require separately approved authoritative
+external attestation; no controller-created effect or self-readback is a positive route.
 
 Legacy `verification_evidence.db` remains diagnostic and cannot satisfy this protocol. Cross-session
 cache data must not mutate or retire another session’s pending state.
