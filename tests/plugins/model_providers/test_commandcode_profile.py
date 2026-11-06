@@ -159,6 +159,56 @@ class TestCommandCodeFetchModelsPickerContract:
         assert anth is not None and anth.id == "commandcode-anthropic"
         assert anth.transport == "anthropic_messages"
 
+    def test_models_dev_compatibility_overlay_is_online_only(self, monkeypatch):
+        from agent.models_dev import ProviderInfo
+        from hermes_cli import providers as providers_mod
+
+        online = ProviderInfo(
+            id="commandcode", name="Catalog CommandCode", env=("CMD_API_KEY",),
+            api="https://catalog.commandcode.test/v1", doc="catalog-doc",
+        )
+        monkeypatch.setattr(providers_mod, "_models_dev_info", lambda *_a, **_kw: online)
+
+        resolved = providers_mod.get_provider("commandcode")
+        assert resolved is not None
+        assert resolved.api_key_env_vars == ("CMD_API_KEY", "COMMANDCODE_API_KEY")
+        assert resolved.base_url == online.api
+        assert resolved.base_url_env_var == "COMMANDCODE_BASE_URL"
+        assert (resolved.transport, resolved.auth_type, resolved.source) == (
+            "openai_chat", "api_key", "models.dev",
+        )
+
+        monkeypatch.setattr(providers_mod, "_models_dev_info", lambda *_a, **_kw: None)
+        offline = providers_mod.get_provider("commandcode")
+        plugin = providers_mod._plugin_profile_pdef("commandcode")
+        assert offline is not None and plugin is not None
+        assert offline.__dict__ == plugin.__dict__
+        assert "commandcode" not in providers_mod.HERMES_OVERLAYS
+
+    def test_explicit_commandcode_endpoint_wins_over_models_dev(self, monkeypatch):
+        from agent.models_dev import ProviderInfo
+        from hermes_cli import providers as providers_mod
+
+        monkeypatch.setattr(
+            providers_mod, "_models_dev_info",
+            lambda *_a, **_kw: ProviderInfo(
+                id="commandcode", name="Catalog CommandCode", env=("CMD_API_KEY",),
+                api="https://catalog.commandcode.test/v1",
+            ),
+        )
+        resolved = providers_mod.resolve_provider_full(
+            "commandcode",
+            {"commandcode": {
+                "name": "Configured CommandCode", "base_url": "https://user.example.test/v1",
+                "key_env": "USER_COMMANDCODE_KEY",
+            }},
+            [],
+        )
+        assert resolved is not None
+        assert (resolved.source, resolved.base_url, resolved.api_key_env_vars) == (
+            "user-config", "https://user.example.test/v1", ("USER_COMMANDCODE_KEY",),
+        )
+
 
 # ── base_url endpoint override ───────────────────────────────────────────────
 

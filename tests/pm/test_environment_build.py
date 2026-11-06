@@ -15,6 +15,7 @@ from tests.pm._fixtures import (
     _run,
     _wheel,
     build_worker as build_worker,  # noqa: PLC0414 -- the self-alias is load-bearing: it suppresses F811 for the pytest fixture parameter shadowing this import
+    build_worker_with_pth_markers as build_worker_with_pth_markers,  # noqa: PLC0414 -- pytest fixture registration
     client as client,  # noqa: PLC0414 -- the self-alias is load-bearing: it suppresses F811 for the pytest fixture parameter shadowing this import
     isolated_python as isolated_python,  # noqa: PLC0414 -- the self-alias is load-bearing: it suppresses F811 for the pytest fixture parameter shadowing this import
 )
@@ -124,7 +125,9 @@ build_editable = build_wheel
 
 
 @pytest.mark.parametrize("sealed", [False, True])
-def test_public_build_installs_all_extras_at_explicit_destination(installable_project, tmp_path, monkeypatch, sealed):
+def test_public_build_installs_all_extras_at_explicit_destination(
+    installable_project, tmp_path, monkeypatch, sealed, build_worker_with_pth_markers,
+):
     from pm import build_environment
     import pm.paths
     import pm.workspace
@@ -135,6 +138,11 @@ def test_public_build_installs_all_extras_at_explicit_destination(installable_pr
     monkeypatch.setenv("UV_PYTHON", "/not-the-interpreter")
     monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", str(tmp_path / "wrong-environment"))
     monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "wrong-environment"))
+    poison = tmp_path / "ambient-poison"
+    poison.mkdir()
+    (poison / "poisoned_ambient.py").write_text("raise AssertionError('ambient poison imported')\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(poison))
+    env["PYTHONPATH"] = str(poison)
     before = dict(os.environ)
     locked = (source / "uv.lock").read_bytes()
     executable = build_environment(explicit=True,
@@ -149,13 +157,23 @@ def test_public_build_installs_all_extras_at_explicit_destination(installable_pr
     # checked before anything imports from the environment.
     assert list(site.glob("*/__pycache__/*.pyc")) or list(site.glob("__pycache__/*.pyc")), \
         "dependencies were installed without bytecode"
-    assert _run([str(executable), "-I", "-c",
-                 "import root_app, member_dep, chosen_dep, other_dep; print(root_app.VALUE)"],
-                cwd=tmp_path, env=env) == "installed from the explicit source"
+    probe = (
+        "import importlib.util, json, root_app, member_dep, chosen_dep, other_dep, sys; "
+        "print(json.dumps({'value': root_app.VALUE, 'prefix': sys.prefix, "
+        "'base_prefix': sys.base_prefix, 'poisoned': importlib.util.find_spec('poisoned_ambient') is not None, "
+        "'poison_path': any('ambient-poison' in p for p in sys.path)}))"
+    )
+    result = json.loads(_run([str(executable), "-I", "-c", probe], cwd=tmp_path, env=env))
+    assert result == {
+        "value": "installed from the explicit source", "prefix": str(tmp_path / "native environment"),
+        "base_prefix": sys.base_prefix, "poisoned": False, "poison_path": False,
+    }
+    assert executable.is_file()
     assert executable.parent.parent == tmp_path / "native environment"
     assert not (tmp_path / "wrong-environment").exists()
     assert "root_app" not in sys.modules
     assert (site / "_virtualenv.pth").exists() is not sealed
+    assert (site / "__editable__.controlled.pth").exists() is not sealed
     assert (site / "construction_root.pth").is_file(), "load-bearing .pth must survive sealing"
     assert (source / "uv.lock").read_bytes() == locked
     assert dict(os.environ) == before

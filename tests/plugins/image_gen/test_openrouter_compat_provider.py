@@ -784,14 +784,50 @@ class TestImageApiSurface:
         assert result["error_type"] == "auth_error"
         assert "_retryable" not in result
 
-    def test_catalog_models_are_offered_only_by_openrouter(self):
-        from plugins.image_gen.openrouter import _IMAGE_API_MODELS, _build_providers
+    def test_catalog_models_are_offered_only_by_openrouter(self, monkeypatch):
+        import plugins.image_gen.openrouter as mod
 
-        by_name = {p.name: p for p in _build_providers()}
+        by_name = {p.name: p for p in mod._build_providers()}
+        monkeypatch.setattr(
+            by_name["openrouter"], "_credentials",
+            lambda: ("openrouter-test-key", "https://openrouter.test/v1"),
+        )
+        monkeypatch.setattr(
+            by_name["nous"], "_credentials",
+            lambda: ("nous-test-key", "https://nous.test/v1"),
+        )
+        monkeypatch.setattr(mod, "_fetch_catalog", lambda *_a, **_kw: [])
+
         openrouter_ids = {m["id"] for m in by_name["openrouter"].list_models()}
         nous_ids = {m["id"] for m in by_name["nous"].list_models()}
-        assert set(_IMAGE_API_MODELS) <= openrouter_ids
-        assert not (set(_IMAGE_API_MODELS) & nous_ids)
+        assert set(mod._IMAGE_API_MODELS) <= openrouter_ids
+        assert not (set(mod._IMAGE_API_MODELS) & nous_ids)
+
+    def test_live_catalog_does_not_advertise_unavailable_curated_models(self, monkeypatch):
+        import plugins.image_gen.openrouter as mod
+
+        curated_a, curated_b = tuple(mod._IMAGE_API_MODELS)[:2]
+        by_name = {p.name: p for p in mod._build_providers()}
+        openrouter_url = "https://openrouter-live.test/v1"
+        nous_url = "https://nous-live.test/v1"
+        monkeypatch.setattr(
+            by_name["openrouter"], "_credentials",
+            lambda: ("openrouter-live-key", openrouter_url),
+        )
+        monkeypatch.setattr(
+            by_name["nous"], "_credentials",
+            lambda: ("nous-live-key", nous_url),
+        )
+
+        def only_openrouter_a(base_url, _api_key, **_kwargs):
+            return [{"id": curated_a}] if base_url == openrouter_url else []
+
+        monkeypatch.setattr(mod, "_fetch_catalog", only_openrouter_a)
+        openrouter_ids = {m["id"] for m in by_name["openrouter"].list_models()}
+        nous_ids = {m["id"] for m in by_name["nous"].list_models()}
+        assert openrouter_ids == {curated_a}
+        assert curated_b not in openrouter_ids
+        assert not ({curated_a, curated_b} & nous_ids)
 
 
 
