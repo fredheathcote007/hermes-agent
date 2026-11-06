@@ -114,3 +114,46 @@ def test_housekeeping_runs_real_cadence_and_backs_off(homed, monkeypatch, caplog
     assert (homed / 'plugin-update-checks/last-run').is_file()
     if failed:
         assert saved['warnings'][0]['message'] in caplog.text
+
+
+@pytest.mark.parametrize('value,expected', [
+    (None, False), (False, False), (True, True),
+    ('false', False), ('no', False), ('off', False),
+    ('true', False), (1, False), (0, False), ('', False),
+    ([], False), ({}, False),
+])
+def test_automatic_plugin_updates_require_literal_boolean_consent(value, expected):
+    """Regression: quoted YAML false must never opt into unattended code updates."""
+    assert cad.auto_apply_enabled(
+        lambda section, key: value if (section, key) == ('plugins', 'auto_apply') else None
+    ) is expected
+
+
+@pytest.mark.parametrize('yaml_scalar,expected', [
+    ('true', True), ('false', False), ('"false"', False),
+    ('"no"', False), ('"true"', False), ('1', False),
+])
+def test_auto_apply_yaml_type_confusion_fails_closed(yaml_scalar, expected):
+    """Actual YAML parser + cfg_get path must preserve boolean-only consent."""
+    import hermes_yaml as yaml
+    from hermes_cli.config import cfg_get
+
+    parsed = yaml.safe_load('plugins:\n  auto_apply: ' + yaml_scalar + '\n')
+    assert cad.auto_apply_enabled(lambda section, key: cfg_get(parsed, section, key)) is expected
+
+
+def test_auto_apply_quoted_false_preserves_update_notice_without_applying(homed):
+    """A due check can show pending updates; quoted false cannot execute them."""
+    from pm import receipt
+
+    applied = []
+    rows = [_Result('synthetic-git', update_available=True)]
+    result = cad.run_scheduled_check(
+        run_checks_fn=lambda _: rows,
+        plugins_dir=homed / 'plugins',
+        apply_updates_fn=applied.append,
+        config_get=lambda section, key: 'false' if (section,key) == ('plugins','auto_apply') else 24,
+    )
+    assert result == rows
+    assert applied == []
+    assert receipt.latest()['outcome'] == 'updates-available'

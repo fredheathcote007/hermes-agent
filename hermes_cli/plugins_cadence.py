@@ -58,7 +58,9 @@ def auto_apply_enabled(config_get: Callable | None = None) -> bool:
     if config_get is None:
         config_get = _default_config_get
     try:
-        return bool(config_get("plugins", "auto_apply"))
+        # Only an explicit YAML boolean true authorises unattended code updates.
+        # Quoted "false" and other truthy non-boolean values must fail closed.
+        return config_get("plugins", "auto_apply") is True
     except Exception:
         return False
 
