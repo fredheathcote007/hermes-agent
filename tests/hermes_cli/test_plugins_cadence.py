@@ -157,3 +157,71 @@ def test_auto_apply_quoted_false_preserves_update_notice_without_applying(homed)
     assert result == rows
     assert applied == []
     assert receipt.latest()['outcome'] == 'updates-available'
+
+
+@pytest.mark.parametrize('yaml_scalar,expected', [
+    ('True', True), ('TRUE', True), ('yes', True), ('on', True),
+    ('"True"', False), ('[true]', False), ('{enabled: true}', False),
+])
+def test_auto_apply_parser_aliases_require_parsed_boolean(yaml_scalar, expected):
+    """YAML aliases map to bool, but string/numeric/container values do not opt in."""
+    import hermes_yaml as yaml
+    from hermes_cli.config import cfg_get
+
+    config = yaml.safe_load('plugins:\n  auto_apply: ' + yaml_scalar + '\n')
+    assert cad.auto_apply_enabled(lambda section, key: cfg_get(config, section, key)) is expected
+
+
+def test_profile_scoped_auto_apply_with_real_config_and_concurrency(tmp_path):
+    """Two profiles must not share consent or synthetic apply callbacks."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+
+    profiles = []
+    for suffix, scalar, expected in (
+        ('allow', 'true', True),
+        ('deny', '"false"', False),
+    ):
+        home = tmp_path / suffix
+        home.mkdir()
+        (home / 'config.yaml').write_text(
+            f'plugins:\n  auto_apply: {scalar}\n', encoding='utf-8',
+        )
+        profiles.append((home, expected))
+
+    # Exercise real config, receipt and cadence boundaries with an in-memory
+    # apply recorder; there are no network requests or plugin installations.
+    for home, expected in profiles:
+        token = set_hermes_home_override(home)
+        try:
+            applied = []
+            rows = [_Result('synthetic-git', update_available=True)]
+            got = cad.run_scheduled_check(
+                run_checks_fn=lambda _: rows,
+                plugins_dir=home / 'plugins',
+                apply_updates_fn=applied.append,
+            )
+            assert got == rows
+            assert applied == (['synthetic-git'] if expected else [])
+            assert (home / 'plugin-update-checks' / 'last-run').is_file()
+        finally:
+            reset_hermes_home_override(token)
+
+    # Overlap context-scoped profile reads to catch accidental global-home use.
+    for iteration in range(40):
+        barrier = Barrier(2)
+
+        def check_profile(home, expected):
+            token = set_hermes_home_override(home)
+            try:
+                barrier.wait(timeout=5)
+                return cad.auto_apply_enabled() is expected
+            finally:
+                reset_hermes_home_override(token)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            checks = [pool.submit(check_profile, home, expected)
+                      for home, expected in profiles]
+            assert all(f.result(timeout=8) for f in checks), iteration
