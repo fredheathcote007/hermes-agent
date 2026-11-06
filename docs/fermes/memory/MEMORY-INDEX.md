@@ -16,6 +16,7 @@ This memory belongs **only** to the maintained fork of `NousResearch/hermes-agen
 - Completed Qwen/LM Studio source integration: `workstreams/qwen-lmstudio/CURRENT-FOCUS.md` and `workstreams/qwen-lmstudio/MERGE-CLOSURE.md`.
 - Completed FHM-004 bounded supervisor and crash recovery: `workstreams/reliability/CURRENT-FOCUS.md` and `../reliability/EVIDENCE-JOURNAL.md`.
 - Open FHM-005 fail-closed verification implementation: `workstreams/reliability/FHM-005-PHASE-1.md` (DEC-004 approved, draft-only until durability/verifier gates).
+- FHM-005 Full Architecture Review Board candidate (not approved implementation): `../architecture/fhm005/ARB-REVIEW-20261027.md`; DEC-005 approves Linux and Windows platform scope only; threat boundary remains owner decision required.
 - Delegated Codex/Cursor/other LLM instruction format and safe process launchers: `AGENT-EXECUTION-PROTOCOL.md`.
 - New-chat entrypoint: `NEW-CHAT-BOOTSTRAP.md`.
 - Evidence, source diffs and test results: source commits and issue/PR comments; do not paste large logs into memory files.
