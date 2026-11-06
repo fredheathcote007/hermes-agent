@@ -19,7 +19,7 @@ name: Supply Chain Audit
 # Outputs:
 #   review_status  — JSON array of status objects consumed by the review
 #                    comment assembler (scripts/ci/assemble_review_comment.py).
-#                    Each job (``scan``, ``dep-bounds``) emits its own
+#                    Each job (``scan``, ``dep-bounds``, ``config-integrity``) emits its own
 #                    array; an ``aggregate`` job merges them into the
 #                    workflow-level output.
 
@@ -40,6 +40,10 @@ on:
         required: true
       deps:
         description: Whether pyproject.toml changed.
+        type: boolean
+        required: true
+      config_integrity:
+        description: Whether editor or JS/TS build/config files changed.
         type: boolean
         required: true
     outputs:
@@ -235,9 +239,76 @@ jobs:
           echo "::error::PyPI dependencies without upper bounds detected. Add <next_major ceiling per CONTRIBUTING.md policy."
           exit 1
 
+  config-integrity:
+    name: Check changed configuration integrity
+    if: inputs.config_integrity
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    outputs:
+      review_status: ${{ steps.emit-status.outputs.review_status }}
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a  # v1
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+
+      - name: Scan changed configuration files
+        id: scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          python3 scripts/ci/config_integrity.py \
+            --base "$BASE_SHA" --head "$HEAD_SHA" > config-integrity-findings.txt 2>&1
+          STATUS=$?
+          set -e
+          cat config-integrity-findings.txt
+          if [ "$STATUS" -eq 0 ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Emit review_status
+        id: emit-status
+        if: always()
+        env:
+          FOUND: ${{ steps.scan.outputs.found }}
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          import os
+
+          found = os.environ.get("FOUND", "") == "true"
+          detail = ""
+          if found:
+              with open("config-integrity-findings.txt", encoding="utf-8") as stream:
+                  detail = stream.read()
+          status = [] if not found else [{
+              "source": "config integrity",
+              "results": [{
+                  "kind": "action_required",
+                  "title": "Configuration integrity risk",
+                  "summary": "Changed editor or JS/TS configuration contains a blocking integrity signal.",
+                  "detail": detail,
+                  "how_to_fix": "Review the changed configuration and remove the automatic task or concealed executable code.",
+              }],
+          }]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write(f"review_status={json.dumps(status)}\n")
+          PYEOF
+
+      - name: Fail on configuration-integrity findings
+        if: steps.scan.outputs.found == 'true'
+        run: |
+          echo "::error::Configuration-integrity findings detected in changed files."
+          exit 1
+
   aggregate:
     name: Aggregate review statuses
-    needs: [scan, dep-bounds]
+    needs: [scan, dep-bounds, config-integrity]
     if: always()
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
@@ -249,12 +320,13 @@ jobs:
         env:
           SCAN_STATUS: ${{ needs.scan.outputs.review_status }}
           DEP_STATUS: ${{ needs.dep-bounds.outputs.review_status }}
+          CONFIG_STATUS: ${{ needs.config-integrity.outputs.review_status }}
         run: |
           python3 - <<'PYEOF'
           import json, os
 
           merged = []
-          for key in ("SCAN_STATUS", "DEP_STATUS"):
+          for key in ("SCAN_STATUS", "DEP_STATUS", "CONFIG_STATUS"):
               raw = os.environ.get(key, "")
               if not raw:
                   continue

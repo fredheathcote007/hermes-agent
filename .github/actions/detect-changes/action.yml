@@ -48,6 +48,9 @@ outputs:
   scan:
     description: Run the supply-chain critical-pattern scanner.
     value: ${{ steps.classify.outputs.scan }}
+  config_integrity:
+    description: Run the changed editor and JS/TS configuration-integrity scanner.
+    value: ${{ steps.classify.outputs.config_integrity }}
   deps:
     description: Check pyproject.toml dependency upper bounds.
     value: ${{ steps.classify.outputs.deps }}

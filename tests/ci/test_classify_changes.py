@@ -41,6 +41,7 @@ DEFAULT = {
     "e2e_desktop_update": True,
     "site": True,
     "scan": True,
+    "config_integrity": True,
     "deps": True,
     "uv_lock": True,
     "npm_lock": True,
@@ -54,7 +55,7 @@ DEFAULT = {
 SLOW_LANES = {"docker", "nix", "e2e", "e2e_upgrade", "e2e_desktop_core", "e2e_desktop_update"}
 
 
-def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_lock=False, npm_lock=False, bootstrap=False, desktop_updater=False, rust=False, docker_meta=False, python_prod=None, nix=False, docker=None, e2e=False, e2e_upgrade=False, e2e_desktop_core=False, e2e_desktop_update=False, remote_backends=False, catalog=False) -> dict[str, bool]:
+def _lanes(python=False, frontend=False, site=False, scan=False, config_integrity=False, deps=False, uv_lock=False, npm_lock=False, bootstrap=False, desktop_updater=False, rust=False, docker_meta=False, python_prod=None, nix=False, docker=None, e2e=False, e2e_upgrade=False, e2e_desktop_core=False, e2e_desktop_update=False, remote_backends=False, catalog=False) -> dict[str, bool]:
     # python_prod tracks python except for tests-only diffs; default it to
     # python so the majority of cases don't need to spell it out.
     #
@@ -76,6 +77,7 @@ def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_
         "docker_meta": docker_meta,
         "site": site,
         "scan": scan,
+        "config_integrity": config_integrity,
         "deps": deps,
         "uv_lock": uv_lock,
         "npm_lock": npm_lock,
@@ -92,7 +94,7 @@ CASES = {
     # through the same compilers (tests/ci/test_update_ci_routing.py).
     "shared JS builder → frontend + both update suites": (
         ["scripts/build/web.mjs"],
-        _lanes(python=True, frontend=True, e2e_upgrade=True, e2e_desktop_update=True),
+        _lanes(python=True, frontend=True, config_integrity=True, e2e_upgrade=True, e2e_desktop_update=True),
     ),
     "root JS tests → frontend": (["tests-js/product-builders.test.mjs"], _lanes(python=True, frontend=True)),
     "docs-only → nothing heavy": (["README.md", "docs/guide.md"], _lanes()),
@@ -112,7 +114,7 @@ CASES = {
     "root lockfile → frontend, not python": (["package-lock.json"], _lanes(frontend=True, npm_lock=True, docker=True, nix=True)),
     "nested lockfile → npm_lock": (["website/package-lock.json"], _lanes(site=True, npm_lock=True)),
     # A website file the Python suite cannot read stays site-only.
-    "website config → site": (["website/docusaurus.config.ts"], _lanes(site=True)),
+    "website config → site": (["website/docusaurus.config.ts"], _lanes(site=True, config_integrity=True)),
     # uv lock --check re-resolves against PyPI, so it must stay off for any
     # diff that can't desync the lockfile — a registry blip on a docs PR
     # otherwise shows up as a blocking "uv.lock out of sync" red X.
@@ -273,31 +275,35 @@ CASES = {
     ),
     "eslint config → frontend": (
         ["apps/desktop/eslint.config.mjs"],
-        _lanes(frontend=True),
+        _lanes(frontend=True, config_integrity=True),
     ),
     "shared eslint config → python": (
         ["eslint.config.shared.mjs"],
-        _lanes(python=True),
+        _lanes(python=True, config_integrity=True),
     ),
     "ui-tui eslint config → frontend": (
         ["ui-tui/eslint.config.mjs"],
-        _lanes(frontend=True),
+        _lanes(frontend=True, config_integrity=True),
     ),
     "web eslint config → frontend": (
         ["web/eslint.config.js"],
-        _lanes(frontend=True),
+        _lanes(frontend=True, config_integrity=True),
     ),
     "shared package eslint config → frontend": (
         ["apps/shared/eslint.config.mjs"],
-        _lanes(frontend=True),
+        _lanes(frontend=True, config_integrity=True),
     ),
     "bootstrap-installer eslint config → frontend + bootstrap": (
         ["apps/bootstrap-installer/eslint.config.mjs"],
-        _lanes(frontend=True, bootstrap=True),
+        _lanes(frontend=True, config_integrity=True, bootstrap=True),
     ),
     "prettier config → python": (
         [".prettierrc"],
         _lanes(python=True),
+    ),
+    "VS Code tasks → config integrity": (
+        [".vscode/tasks.json"],
+        _lanes(python=True, config_integrity=True),
     ),
     "workflow yml → fail-open all": (
         [".github/workflows/typecheck.yml"],
@@ -593,6 +599,7 @@ def _iter_if_expressions(job: object):
 # (caller workflow, job, called workflow, lane input) for every real-update
 # suite: each runs on a PR exactly when its lane fires and then gates the merge.
 _REAL_UPDATE_LANES = (
+    ("ci.yaml", "supply-chain", "supply-chain-audit.yml", "config_integrity"),
     ("ci.yaml", "tests", "tests.yml", "e2e_upgrade"),
     ("ci.yaml", "tests-os", "tests-os.yml", "e2e_upgrade"),
     ("ci.yaml", "e2e-desktop-update", "e2e-desktop-update.yml", "e2e_desktop_update"),
