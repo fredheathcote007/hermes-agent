@@ -1,0 +1,194 @@
+# Historical FHM-007 memory-v2 current-focus snapshot (to 27 October 2026)
+
+This is an archive of the previous rolling CURRENT-FOCUS.md prior to the 10 November 2026 reconciliation. Many entries are historical or superseded. **Do not use the dated next actions or CI statuses below as current.** Current workstream focus lives in CURRENT-FOCUS.md; tracking authority lives in GitHub FHM-007 issues #7 and #66, and Fermes ReMe #17.
+
+---
+
+# FHM-007 — Current Focus
+
+project_id: fermes-hermes
+issue: https://github.com/fredheathcote007/hermes-agent/issues/7
+workstream_id: memory-v2
+priority: P1
+status: Real-model memory write/restart/recall PASS; draft PR open, full production acceptance NOT PASSED
+updated: 2026-10-27 Australia/Perth
+source_reme_fork: https://github.com/fredheathcote007/fermes-reme
+source_reme_branch: fermes/hermes-provider-stage1
+source_reme_commit: 76ac2982dede38b5d6f497e14ca532ea98a6dd88
+reme_draft_pr: https://github.com/fredheathcote007/fermes-reme/pull/1
+hermes_deferred_sqlite_draft_pr: https://github.com/fredheathcote007/hermes-agent/pull/19
+
+## Approved direction
+
+DEC-004: Full ReMe fork first. Maintain ReMe file-backed workspace and BM25.
+Stage 1 uses embedded Hermes MemoryProvider and dedicated local-only
+`reme/config/fermes-hermes-stage1.yaml` with CLI/no network listener,
+no Dream/proactive scheduled jobs, and loopback-only LLM defaults. Profile
+config must explicitly choose this file, not upstream ReMe `default`.
+SQLite ledger and new vector backend are deferred, Hermes PR #19 stays draft.
+No Hindsight or Project Coordinator service dependency.
+
+## What changed on isolated ReMe fork
+
+- Fsynced, profile-local JSONL journal for accepted Hermes turns, private
+  directories/files, safe path/symlink handling, replay after interruption,
+  backoff and later-record processing after failures.
+- Stable journal IDs are sent via ReMe's existing `auto_memory(request_id)`
+  idempotency receipt interface through embedded/HTTP adapters.
+- Existing Hermes loader and plugin manager interfaces retained.
+- Focused GitHub-hosted Ubuntu 24.04 fork CI; no Blacksmith.
+- Independent Cursor findings and exact host evidence captured in fork docs.
+- Draft fork PR #1 is open and unmerged; Hermes active runtime unchanged.
+
+## Verified evidence
+
+- ReMe focused Hermes adapter suite: 47/47 PASS, log
+  `/tmp/fhm007/reme-stage1-final-host-tests.log`.
+- Real maintained Hermes plugin doctor PASS:
+  `/tmp/fhm007/reme-plugin-doctor-host.log`.
+- Real loader discovery/registration PASS in disposable HERMES_HOME:
+  `/tmp/fhm007/real-hermes-loader-smoke.log`.
+- Real ReMe embedded local BM25 retrieved synthetic file:
+  `/tmp/fhm007/offline-bm25-probe.log`.
+- Distinct alpha/beta profiles and workspaces: own synthetic evidence recalled,
+  other profile's token absent; fresh session and post-restart retrieval PASS:
+  `/tmp/fhm007/two-profile-bm25-probe.log`,
+  `/tmp/fhm007/real-provider-alpha.log`, `real-provider-beta.log`.
+- Stage 1 config resolves with no cron/Dream, CLI service and loopback model default.
+- ReMe CI `Fermes ReMe Stage 1 CI` run 40303028576 PASS on ubuntu-24.04;
+  ReMe full upstream workflows still checking; PR semantic title corrected and
+  replacement title-policy run 40303242396 PASS.
+- Code review in `docs/fermes/INDEPENDENT-REVIEW.md` says draft PR ready,
+  but **NO GO** for production or full FHM-007 acceptance.
+
+## Blocking/unverified capabilities
+
+- Real LLM-backed Hermes conversational auto-memory capture and evidence
+  provenance not yet proven. Dad-PC LM Studio currently only listens on
+  `127.0.0.1:1234` on Dad-PC; do not change bind/firewall without approval.
+- Real ReMe model write/receipt crash-window side-effect idempotency remains
+  untested end-to-end; journal ensures at-least-once, not universal exactly-once.
+- Same Hermes profile / same journal accessed by multiple processes is
+  unqualified; do not run multiple ReMe writer processes against same profile.
+- FHM-006 v2 precompress fail-closed checkpoint, poisoning resistance, and
+  future SkillHone / SkillOpt-Sleep promotion/rollback remain unqualified.
+- Shared ReMe workspace between identities is NOT authorised; per-profile
+  distinct workspace is required.
+- ReMe Dream issues #659, #660, #661 and pending patches #664, #668; Dream
+  remains disabled until independent qualification.
+- User approval is mandatory for any live deployment or main merge.
+
+## Exact next action
+
+Complete remaining inherited ReMe CI and triage real failures only. In isolated
+work, add deterministic tests of ReMe's real request_id replay receipts and
+same-profile multi-process spool safety/lock strategy; then separately qualify
+memory extraction through a safe local-model endpoint. Keep PR #1 draft and
+issue #7 OPEN P1. Preserve existing Qwen / LM Studio worktrees and draft PRs.
+
+## 2026-10-26 latest FHM-007 reliability checkpoint
+
+- Full ReMe fork draft PR #1 now includes commit `fa93e09`; no main merge or production deployment.
+- Cross-process same-profile single-writer lock is implemented and fails closed on contention. Linux competing process test PASS (`/tmp/fhm007/multiprocess-lock-host.log`). Windows implementation still requires CI qualification.
+- ReMe real `Application.run_job` synthetic request-ID replay PASS. Combined focused provider and ReMe receipts test suite: **65/65 PASS** (`/tmp/fhm007/reliability-final-combined-host.log`).
+- Cursor independent code review found no draft-PR blocker; not approved for production. Remaining: Windows CI, full LLM-backed memory extraction, arbitrary crash mid-agent action, FHM-006 precompress checkpoint, source provenance and memory-poisoning gates.
+- Exact next action: inspect CI for `fa93e09`, remediate proven platform failures, rerun independent checks, then qualify model-backed memory through an authorised local endpoint. Keep Dream disabled and PR draft.
+
+## 2026-10-26 final Stage 1 CI checkpoint
+
+- ReMe draft PR #1 latest compatibility commit `a9e9d38` (docstring remediation after pylint failure). All **8/8** GitHub workflows on this commit PASS: Python quality, Python test matrix, Windows CLI smoke, packages, documentation, Docker, CodeQL, focused Fermes Stage 1 CI. Earlier failed runs belong to superseded commits, not unresolved current failures.
+- Offline end-to-end synthetic capture workstream in separate worktree `fermes/fhm007-offline-capture-20261026`, based on `fa93e09`. Preliminary independent host run of the synthetic actual Hermes provider->ReMe AgentScope tool->saved daily note->restart->BM25 recall test PASS (`/tmp/fhm007/host-capture-first.log`). This test monkeypatches model transport; it is not a real LM Studio LLM test. Pending Cursor review and separate branch handback.
+- Remaining production gates unchanged: authorised real model call, mid-write crash consistency, shared workspace protection, FHM-006 checkpoint, injection/provenance, background Dream and skill improvement safety. No active Hermes deployment or main merge.
+
+## 2026-10-26 Stage 1 synthetic capture qualification (commit ab106af)
+
+- ReMe fork draft PR #1 branch fermes/hermes-provider-stage1 now includes `ab106af00948a3319144e85827eb39ccf228bbfd`, adding a deterministic AgentScope model-transport substitution that leaves ReMe embedded backend, model tool execution, async file I/O, session provenance, durable journal, shutdown/restart and BM25 retrieval real. Test source `tests/unit/test_fermes_capture_integration.py` and qualification record `docs/fermes/CAPTURE-QUALIFICATION.md`.
+- Authorised host **66/66** focused tests PASS (`/tmp/fhm007/all-stage1-host.log`). Ruff/Black and git diff whitespace PASS. New test uses dynamic UTC date (not pinned 2026-10-26), checks session source and retrieval path, and is included in `.github/workflows/fermes-reme-ci.yml` on ubuntu-24.04.
+- Independent Cursor review `/tmp/fhm007/cursor-capture-review.log` found valid real provider/tool path, distinguished synthetic scripted model versus actual LLM extraction and recommended CI/date/source changes, all applied. The first Codex sandbox attempt failed to execute real async I/O; it was terminated rather than accepting a replacement mocked file/backend test. Main ReMe worktree clean, separate exploratory worktree preserved as evidence.
+- GitHub ReMe CI triggered for `ab106af`, runs beginning 40310001274; statuses not yet verified PASS. Keep draft PR and issue OPEN; no merge/deploy or Dad-PC configuration changes.
+- Next: check CI, remediate any concrete regressions, validate real local-model inference over an already-authorised model route when available. Remain blocked for FHM-006 pre-compaction fail-closed, memory poisoning, provenance trust, mid-agent partial-crash semantics, and future SkillHone/SkillOpt-Sleep policy.
+
+## Verified CI closure for Stage 1 synthetic gate
+
+- ReMe commit `ab106af`: all eight GitHub PR workflows PASS, including Windows, Python quality, Python tests, CodeQL, Docker and Fermes Stage 1 Ubuntu CI.
+- Dedicated Fermes Ubuntu 24.04 workflow run `40310001274`: **66 passed in 18.54s**. Test creates and recalls a synthetic memory using actual ReMe provider/storage and deterministic model transport; no real LLM inference claim.
+- Project Coordinator inspected for existing LM Studio local listener/tunnel; no active model listener/tunnel identified. Do not alter Dad-PC binding or firewall without explicit security authorisation.
+- Stage 1 integration accepted as a **draft-only evidence milestone**, not production or full FHM-007 acceptance. Issue #7 remains OPEN P1 and ReMe fork PR #1 remains unmerged.
+
+## 2026-10-26 security-boundary and checkpoint-design checkpoint
+
+- ReMe fork draft PR #1 latest pushed HEAD `d19ef09caba295e749566e3e3d14e12680b40f67` (implementation/test `bdcd2c151bb5cdf3e22870f70d6b598783d2e5ff`). Existing file/BM25 engine retained; no Dream/SQLite/new vector, no production changes.
+- Project Coordinator authorised host three-suite test command: **67 passed in 15.27s** (baseline 66); log `/tmp/fhm007/poisoning-full-host.log`. New synthetic hostile-source test uses real ReMe BM25 retrieval and maintained Hermes MemoryManager/context fence plus output scrubber. It proves passive recall/fence behaviour only, NOT real-model resistance to prompt injection, not complete top-level turn composition or skill-promotion safety.
+- Independent Cursor source review: `/tmp/fhm007/cursor-security-review.log` and `/tmp/fhm007/cursor-security-final-review.log`. Findings: prior qualification matrix had mixed sandbox-vs-host conclusions; clarified in `docs/fermes/INTEGRATION-QUALIFICATION.md`. A security test skip without Hermes on PYTHONPATH cannot count as PASS; dedicated Fermes CI checks out Hermes. Raw memory source session metadata is not cryptographically signed and not all metadata is necessarily present in recall text.
+- Proposed checkpoint design (not enabled): `docs/fermes/FHM006-CHECKPOINT-GAP.md`. Existing ReMe provider stays v1. Hermes-side v2 currently treats a non-raising provider as checkpoint success; design requires durable fsync-backed scoped receipt, evidence hash validation, bounded synchronous operation and fail-closed abort before v2 marker can be enabled. Material host/API changes require review and owner approval.
+- GitHub `Fermes ReMe Stage 1 CI` for `d19ef09` PASS, run 40312513379. At initial checkpoint other inherited checks were still running. Track actual CI conclusion before claiming all green.
+- Model gate: Dad-PC LM Studio is healthy but bound to 127.0.0.1:1234; Project Coordinator had no active authorised tunnel detected. No firewall/bind change made or approved. Genuine model-generated Hermes memory extraction remains outstanding.
+- Exact next action: reconcile GitHub CI on `d19ef09`; preserve draft PR and FHM-007 OPEN P1. Then resolve workspace-ownership and FHM-006 checkpoint trust-boundary design through controlled architecture review, and qualify local-model extraction via an authorised endpoint without changing Dad-PC firewall/binding automatically. Keep other Fermes PRs/worktrees untouched.
+
+## LM Studio LAN endpoint clarification — 2026-10-26
+
+Owner confirms Dad-PC uses LAN address `10.1.1.50` and expects LM Studio to be accessible there. Read-only checks verify `10.1.1.50/24` exists on Dad-PC, but the **current process** listens only on `127.0.0.1:1234` (Windows `Get-NetTCPConnection`; no `0.0.0.0:1234` or `10.1.1.50:1234` listener). Dad-PC local request to the LAN endpoint did not return a model list; Project Coordinator `curl --noproxy '*' --connect-timeout 3 http://10.1.1.50:1234/v1/models` timed out. Local `127.0.0.1:1234/v1/models` works on Dad-PC. Distinguish LAN interface assignment or intended LM Studio configuration from actual socket listening. **No listener, firewall, tunnel or credential modifications authorised or performed.** Next: verify LM Studio 'Serve on Local Network' operational state and Windows firewall as separate controlled change if required; retry Project Coordinator connectivity, then isolated real model extraction. Do not assume this blocker is permanently resolved solely because the interface IP is correct.
+
+## Dad-PC LM Studio/Bionic LAN regression RCA — 2026-10-26
+
+Owner confirmed `http://10.1.1.50:1234` previously worked, so classify loss as **regression**, not a new network design task. Read-only Windows diagnostics: Dad-PC has LAN IP `10.1.1.50/24`; earlier port `1234` was owned by `Bionic.exe` **1.1.8**, bound only to `127.0.0.1:1234`. Shared `%USERPROFILE%\.lmstudio\.internal\http-server-config.json` currently records `port=1234`, `networkInterface=127.0.0.1` (last modified 2026-10-26 16:41). Bionic restarted at approximately 19:20 on 2026-10-26; afterwards `Get-NetTCPConnection` found no listening port 1234 and `lms server status` returned **server not running**. Project Coordinator attempted `curl --noproxy '*' --connect-timeout 3 http://10.1.1.50:1234/v1/models` and timed out earlier. The historical good bind address was not independently recovered from local config backups; user's firsthand statement supports it.
+
+Exact matching upstream **open** GitHub report: `lmstudio-ai/lmstudio-bug-tracker#2500`, Bionic 1.1.8 reverts a previously accessible LAN API to localhost (shared vs Bionic-specific server settings). Our current machine has no Bionic-specific `http-server-config.json` at the issue author's path, so exact migration route is **probable, not proven**. Official LM Studio docs support `lms server start --bind <address>` and recommend auth when exposing to LAN. Locally `lms server start --help` confirms binding option. No API listener, firewall, Bionic config, credential or service changes were made in this investigation.
+
+**Next controlled restoration, pending owner approval:** preserve/backup existing config, start LM Studio server on `10.1.1.50:1234` with LAN scope (or app supported LAN setting), ensure restricted/authenticated access, verify Windows `Get-NetTCPConnection`, Dad-PC local LAN URL and Project Coordinator remote `/v1/models`, then run isolated FHM-007 real-model capture/recall. Check persistence after app restart and reversion, rollback by stopping service/restoring backed-up settings. Do not incorrectly close FHM-007 based on IP assignment alone.
+
+## 2026-10-26 — Approved Bionic LAN restoration and live ReMe failure
+
+- **Owner approved** restoration of LM Studio API on Dad-PC `10.1.1.50:1234`.
+- **Root mechanism confirmed:** Bionic 1.1.8 (`Bionic.exe`) and its own config under `C:\Users\Fred\.lmstudio\apps\bionic\.internal\http-server-config.json` used `networkInterface: 127.0.0.1`, matching public upstream issue lmstudio-ai/lmstudio-bug-tracker#2500; shared LM Studio config also had localhost.
+- Both files backed up privately on Dad-PC (suffix `.pre-fermes-restore-20261026-192859.bak`; shared file has an additional earlier pre-restore backup). Bionic GUI closed gracefully; remaining background process stopped when no API clients or model workers were active; both binds changed to **10.1.1.50**; Bionic relaunched. No new Windows Firewall rules or service deployment changes.
+- **Network and model proof:** Windows socket `10.1.1.50:1234` LISTENING; Project Coordinator `10.1.1.40` GET `/v1/models` **HTTP 200**, 21 models listed, approximately 5 ms. Actual Qwen 3.5 4B synthetic completion returned `FHM007_MODEL_OK`; a direct API tool invocation with four required arguments returned valid JSON.
+- **Real ReMe learning qualification FAIL:** In a temporary Bubblewrap workspace with read-only host root, actual Hermes loader and ReMe embedded provider accepted synthetic turn, Qwen 3.5 4B generated seven `daily_write` tool calls with empty `{}` inputs; all failed required arguments. AgentScope hit six-iteration ceiling. ReMe cached an `auto_memory` **success:true, changes:[]** receipt, Hermes fsynced journal was emptied, zero memory files were created, and fresh-session recall was empty. Repro log: `/tmp/fhm007/live-reme-capture.log`, synthetic trace `/tmp/fhm007/live-model-sandbox/reme-workspace`. **Do not claim E2E learning PASS** or confuse with network failure.
+- Codex high-reasoning isolated ReMe fork workstream started to make failed durable tool calls fail closed and preserve pending turns; no production/main changes. Any safe actual tool-schema compatibility remedy needs source evidence and independent validation.
+- **Next:** validate Codex model-free failure tests on host; independently review patch; rerun the synthetic real-model capture to prove failed extraction cannot silently clear memory; then qualify a local model which actually writes and recalls durable facts. FHM-007 OPEN P1, Dream disabled, SQLite/vector changes deferred, existing draft PR #1 unmerged.
+
+## FHM-007 approved LAN restore and ReMe failure containment delivery — 2026-10-26
+
+- Dad-PC Bionic 1.1.8 successfully restarted with API bound to `10.1.1.50:1234`; Project Coordinator `10.1.1.40` read `/v1/models` HTTP 200 and Qwen 3.5 4B performed both synthetic text completion and direct valid four-argument tool call. No Windows firewall rule created or changed; Bionic-specific and shared JSON server configs backed up on Dad-PC. Network restoration is CONFIRMED.
+- **Real ReMe learning still FAIL:** Qwen 3.5 4B plus AgentScope generated seven empty-argument `daily_write` calls; no daily memory was created or recalled. Original ReMe incorrectly cached `success:true,changes:[]` and cleared its pending journal. See `/tmp/fhm007/live-reme-capture.log` and synthetic trace.
+- **Failure containment FIX demonstrated:** isolated full ReMe fork draft PR #1 commit `473c8802e8b541cd194fb8eb1ed98ed92fe5d7dd` passes 69/69 host focused tests, and in a second real-model test failed tool writes return `success:false`, write no receipt, and retain **one pending journal record**. ReMe uses the redacted current-turn tool execution summary; no active installation or default-branch merge. See `/tmp/fhm007/final-livefix-host-tests.log`, `/tmp/fhm007/live-reme-capture-after-fix.log`, `docs/fermes/LIVE-MODEL-QUALIFICATION.md` and `INDEPENDENT-LIVE-FAILURE-REVIEW.md` in the fork. Draft PR, not approved for merge.
+- Additional active blockers: model/AgentScope tool-schema incompatibility (invalid tool args); repeated retry attempts; asynchronous model client close triggered `RuntimeError: Event loop is closed` on failed shutdown; source provenance hash and FHM-006 durable checkpoint; cross-workspace profile ownership; learning success/recall unproven. Independent review accepts draft-PR preservation only and requires fail-closed missing/unknown result tests and call ID pairing.
+- GitHub 8 CI workflows for `473c8802` triggered, awaiting outcomes at checkpoint. No Dream, no Hindsight/Project Coordinator dependency, no SQLite/vector change, no production Hermes change. Keep FHM-007 **OPEN P1**.
+- Exact next: resolve CI; improve tool-argument generation for local models and durable write receipt policy, bound retry/shutdown, then repeat genuine synthetic model-generated capture, file/source provenance and fresh-session recall; only after passing acceptance seek merge/deployment approval.
+
+## FHM-007 draft PR delivery and CI correction — 2026-10-26
+
+- Full ReMe fork draft PR #1 has implementing commit `473c8802e8b541cd194fb8eb1ed98ed92fe5d7dd`; current fork head `661a5ed` only corrects ten VitePress dead links in the independent review document. Dedicated Ubuntu CI, previous Python quality/tests, Windows and CodeQL checks passed on 473c880, but documentation failed solely due to those absolute host filesystem Markdown links. Current full GitHub CI for 661a5ed is in progress; do not claim all checks passed until results are verified.
+- **69/69** focused Project Coordinator host suite PASS, direct read of real-model failed-turn log confirms zero success receipts, one durable pending write, no daily memory and no recall. Independent review allows a draft PR, **not merge**. Continued risks are malformed/missing/mixed tool result handling, call-result pairing, local model tool args incompatibility, shutdown after failures, workspace identity boundaries, FHM-006 checkpoint, and actual memory usefulness.
+- Exact next action: validate latest documentation CI and other checks; investigate real Qwen/AgentScope `daily_write` argument generation and asynchronous cleanup, implement focused regressions without altering active Hermes or Dream, then repeat model-created durable note and fresh-session evidence recall.
+
+## FHM-007 continuation handoff — 2026-10-26
+
+Full new-chat pack: `docs/fermes/memory/handoffs/fhm-007-reme-2026-10-26/00-START-HERE.md` (read numeric files, then `NEW-CHAT-PROMPT.md`). Baseline ReMe draft PR #1 head `661a5ed`, 69 host tests PASS, real model learning FAIL but failure containment PASS. At handoff 8/8 GitHub checks PASS on ReMe commit 661a5ed, including Docker; re-query CI if the branch HEAD changes. No production merge/deployment. Exact next task: verify live CI, close fail-open tool-result/call-ID gaps, repair ReMe/AgentScope local model tool args, prove memory creation and restart recall.
+
+
+## 2026-10-27 — FHM-007 corrected local-model execution and P2 delivery checkpoint
+
+- Canonical identity confirmed: `project_id: fermes-hermes`. Owner-approved full ReMe fork, file-backed workspace + BM25, embedded local-only Hermes MemoryProvider; Dream/proactive cron, SQLite/vector migration and production deployment remain disabled.
+- Draft ReMe fork PR #1 received fast-forward commit `10ed29221cd42329238ca7d35a7583b7b283a8bf`, based on CI-remediation commit `da7b298` without overwriting concurrent work. PR remains **DRAFT, OPEN, UNMERGED**; FHM-007 issue #7 remains **OPEN P1**.
+- Corrections: Stage 1 ReMe tool JSON schemas supplied to AgentScope for `daily_write`, read/write/edit/frontmatter; current-turn tool call/result evidence correlates by IDs and is fail-closed on missing/invalid/mixed results; server-owned scoped `session_id` injected on create; successful tool response without a note attributable to the requested session cannot create a successful receipt; failed update remains retryable; internally created OpenAI async clients explicitly closed before loop teardown, borrowed models not closed.
+- Reconciled 2026-10-27 source worktree: `/srv/project-coordinator/projects/fermes-reme-fhm007-p2-review-20261027`. Focused host suite **111/111 PASS** after the combined patch and formatting; local log `/tmp/fhm007/p2-review-host-tests.log`. Cursor independent read-only review `/tmp/fhm007/fhm007-p2-review-cursor.log` found **no P0/P1 code blocker to DRAFT PR update**; this does **not** approve main merge or deployment.
+- Actual Qwen 3.5 4B through Dad-PC authorised LM Studio API was requalified in an isolated Bubblewrap read-only-root sandbox `/tmp/fhm007/live-model-sandbox-6`: 2 durable daily Markdown files (1 substantive note), pending journal empty, new session retrieved synthetic marker `FHM007-amber-kite-824` and colour teal; `ACCEPTANCE True`, process exit 0. AgentScope still reported maximum six iterations after write; do not claim clean model finalisation.
+- New GitHub CI for `10ed292` started: workflow run IDs 40418821756 (Python tests), 40418822040 (CodeQL), 40418822203 (Fermes Stage 1), 40418821746 (Windows), 40418821757 (Docker), 40418821723 (Python quality), 40418821814 (packages), 40418822011 (documentation). Latest observed: packages and documentation PASS; other workflows running. Requery on resume, no all-green claim yet.
+- **Acceptance still blocked:** legitimate no-tool `auto_memory` can return success/no note and clear a Hermes pending turn that a user explicitly wanted remembered (retention intent versus no-op policy); source-content provenance `source_hash`, same-profile unexpected interruption/partial side-effect recovery, workspace trust, poisoning resistance, FHM-006 v2 pre-compression receipt, and 6-iteration model finalisation need explicit gates. No active Hermes installation or main branch was modified.
+- Next: monitor full CI and remediate actual failures without Blacksmith or force-push. Design and prove a retention-intent contract preserving genuine no-op but preventing silent loss of explicit remember requests; then independent operational/security review. Do not merge/deploy without owner approval.
+
+## 2026-10-27 — Latest qualification
+
+- PR #1 head 76ac298: eight GitHub CI workflows PASS. Still draft and not merged.
+- Isolated tagging schema candidate 3a2be24 in /srv/project-coordinator/projects/fermes-reme-fhm007-tag-schema-20261027. Not on PR #1. Host tests 111 PASS and auto-tag tests 5 PASS; Cursor review no P0/P1 draft blockers.
+- Real Qwen sandbox-7: note written, tag applied, journal empty and fresh-session BM25 recall PASS. Tagger still hit six-iteration ceiling after successful operations.
+- Remaining acceptance: retention-intent versus legitimate no-op; provenance, crash recovery, FHM-006 checkpoint, profile boundaries and model finalisation. No production deployment or main merge.
+
+## 2026-10-27 FHM-007 draft provenance and retention gate
+
+- `project_id: fermes-hermes`. Draft full ReMe fork PR #1 advanced by fast-forward to `a8530ea303eb5a7a1056752e842a7ab39cbe3c71`; OPEN/DRAFT/UNMERGED. No production Hermes deployment or main merge.
+- Provenance/security/retention patch: protected source transcript SHA-256, session ownership verification at write and repair, HTTP/MCP reserved-context rejection, stale receipt re-verification, explicit `memory_hint` fail-closed no-op with genuine no-hint no-op preserved. Reviewed by independent Cursor; three prior P1 code findings corrected.
+- Local Project Coordinator: 233 selected host tests PASS; optional Claude SDK test not installed; unrelated local HTTP-web suite blocked by FastMCP/MCP dependency mismatch; Black and diff checks PASS. Real-model sandbox 11: Qwen3.5-4B created durable note, cleared journal and was recalled after fresh provider restart (marker `FHM007-amber-kite-824`, colour teal; `ACCEPTANCE True`, exit 0). New commit GitHub matrix running at checkpoint; do not claim all green until checked.
+- Remaining P1: crash-window note-write-before-receipt can cause retry side effects; isolated test lane `/srv/project-coordinator/projects/fermes-reme-fhm007-crash-gate-20261027` created to prove behavior. FHM-006 pre-compression v2 remains proposed, awaiting approved receipt/schema/deadline. Hermes current `sync_turn` does not automatically set explicit retention hint, so this enforcement is not yet complete end-to-end for user intent. Poisoning, model 6-iteration finalisation, and ops security remain gates.
+- Exact next: inspect CI at a8530ea, capture crash test red/green and remediate without unapproved architecture changes, run independent final review; do not merge or deploy until required gates clear.
