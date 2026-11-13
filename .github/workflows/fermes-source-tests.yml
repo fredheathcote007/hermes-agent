@@ -5,9 +5,9 @@ on:
     branches: [main]
     types: [opened, reopened, synchronize, ready_for_review, edited]
 
-# Candidate code runs with only contents:read, needed for reliable checkout.
-# No write-capable permissions, persisted credentials, secrets or publishing.
-# The trusted gate verifies this workflow byte-for-byte against protected base.
+# Candidate code is only executed under contents:read on pull_request.
+# This workflow itself is gate-critical and must be installed using the
+# owner-controlled bootstrap path, never through a normal candidate PR.
 permissions:
   contents: read
 
@@ -16,10 +16,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Fermes unprivileged PR tests
+  classify:
+    name: Classify source using protected base
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
+    outputs:
+      source: ${{ steps.classify.outputs.source }}
+      merge_sha: ${{ steps.pin_merge.outputs.merge_sha }}
     steps:
       - name: Checkout protected base revision
         uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
@@ -37,7 +40,7 @@ jobs:
           path: candidate
           fetch-depth: 0
           persist-credentials: false
-      - name: Classify and validate the exact synthetic merge with base code
+      - name: Classify and validate exact synthetic merge with protected code
         id: classify
         working-directory: base
         env:
@@ -46,45 +49,213 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/ci/fermes_gate.py classify
-      - name: Validate docs-only change
-        if: ${{ steps.classify.outputs.source == 'false' }}
-        run: echo "Trusted base classifier validated the Markdown-only change"
+      - name: Pin exact validated synthetic merge commit
+        id: pin_merge
+        working-directory: candidate
+        run: echo "merge_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Fermes source quality and gate tests
+    needs: [classify]
+    if: ${{ needs.classify.outputs.source == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout GitHub synthetic merge
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ needs.classify.outputs.merge_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the classified synthetic merge is unchanged
+        working-directory: candidate
+        env:
+          EXPECTED_MERGE_SHA: ${{ needs.classify.outputs.merge_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_MERGE_SHA"
       - name: Set up Python 3.14
-        if: ${{ steps.classify.outputs.source == 'true' }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.14'
       - name: Set up pinned uv
-        if: ${{ steps.classify.outputs.source == 'true' }}
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
-          # Keep this equal to pm/lock.json; the source lane must use the
-          # same verified toolchain as the repository's other test lanes.
-          version: '0.12.3'
+          version: '0.12.3' # pm/lock.json
           enable-cache: false
       - name: Prepare locked test environment
-        if: ${{ steps.classify.outputs.source == 'true' }}
         working-directory: candidate
         run: uv sync --locked --python 3.14 --extra all --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --group dev --group test --no-install-project
-      - name: Run blocking lint and health checks for source changes
-        if: ${{ steps.classify.outputs.source == 'true' }}
+      - name: Blocking lint and health checks
         working-directory: candidate
         run: .venv/bin/python scripts/check --only ruff,health
-      - name: Run all focused CI gate tests
-        if: ${{ steps.classify.outputs.source == 'true' }}
+      - name: All focused CI gate tests
         working-directory: candidate
         run: scripts/run_tests.sh
         env:
           HERMES_PYTHON: ${{ github.workspace }}/candidate/.venv/bin/python
           HERMES_TEST_PATHS: tests/ci/test_fermes_gate.py
-          HERMES_TEST_WORKERS: 2
-          HERMES_TEST_FILE_TIMEOUT: 600
-      - name: Run bounded repository regression slice
-        if: ${{ steps.classify.outputs.source == 'true' }}
+          HERMES_TEST_WORKERS: '2'
+          HERMES_TEST_FILE_TIMEOUT: '600'
+          HERMES_TEST_FILE_RETRIES: '0'
+
+  regression:
+    name: Fermes repository regression (${{ matrix.slice }}/8)
+    needs: [classify, quality]
+    if: ${{ needs.classify.outputs.source == 'true' && needs.quality.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        slice: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - name: Checkout GitHub synthetic merge
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ needs.classify.outputs.merge_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the classified synthetic merge is unchanged
+        working-directory: candidate
+        env:
+          EXPECTED_MERGE_SHA: ${{ needs.classify.outputs.merge_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_MERGE_SHA"
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Reject empty or overlapping actual repository slices
+        working-directory: candidate
+        shell: bash
+        env:
+          SLICE_NUMBER: ${{ matrix.slice }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import os
+          from argparse import Namespace
+          from pathlib import Path
+          from scripts import run_tests_parallel as runner
+
+          root = Path.cwd()
+          # Mirror the canonical run_tests.sh defaults and its actual
+          # _slice_files selection, which deliberately ignores duration caches.
+          args = Namespace(files=None, files_from=None, paths_positional=[],
+                           paths="tests", include_integration=False)
+          files, _roots = runner._select_files(args, [], root)
+          if not files:
+              raise SystemExit("no repository test files discovered")
+          seen = set()
+          for index in range(1, 9):
+              selected = runner._slice_files(files, index, 8, {}, root)
+              if not selected:
+                  raise SystemExit("empty repository test slice")
+              for path in selected:
+                  if path in seen or not path.is_file():
+                      raise SystemExit("duplicate or missing repository test file")
+                  seen.add(path)
+          if len(seen) != len(files):
+              raise SystemExit("repository tests omitted from slice plan")
+          index = int(os.environ["SLICE_NUMBER"])
+          if index not in range(1, 9):
+              raise SystemExit("invalid requested slice index")
+          print(f"validated 8 actual nonempty slices over {len(files)} files")
+          PYCODE
+      - name: Set up pinned Node 26
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26.7.0' # pm/lock.json
+          check-latest: false
+      - name: Install SHA256-verified ripgrep 15.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG_VERSION=15.2.0
+          RG_SHA256=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c
+          RG_TARBALL="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          TMP_EXTRACT="$(mktemp -d)"
+          trap 'rm -rf "$TMP_EXTRACT"' EXIT
+          curl --fail --show-error --silent --location --retry 3 --retry-delay 5 \
+            --output "$TMP_EXTRACT/$RG_TARBALL" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_TARBALL}"
+          cd "$TMP_EXTRACT"
+          echo "${RG_SHA256}  ${RG_TARBALL}" | sha256sum -c -
+          tar -xzf "$RG_TARBALL"
+          mkdir -p "$RUNNER_TEMP/fermes-ci-tools"
+          install -m 0755 "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg" "$RUNNER_TEMP/fermes-ci-tools/rg"
+          echo "$RUNNER_TEMP/fermes-ci-tools" >> "$GITHUB_PATH"
+      - name: Verify pinned Node and ripgrep
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v26.7.0"
+          RG_LINE="$(rg --version | sed -n '1p')"
+          [[ "$RG_LINE" == "ripgrep 15.2.0"* ]]
+          node --version
+          printf '%s\n' "$RG_LINE"
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: '0.12.3' # pm/lock.json
+          enable-cache: false
+      - name: Prepare locked test environment
+        working-directory: candidate
+        run: uv sync --locked --python 3.14 --extra all --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --group dev --group test --no-install-project
+      - name: Run entire bounded repository regression slice
         working-directory: candidate
         run: scripts/run_tests.sh
         env:
           HERMES_PYTHON: ${{ github.workspace }}/candidate/.venv/bin/python
-          HERMES_TEST_SLICE: 1/4
-          HERMES_TEST_WORKERS: 4
-          HERMES_TEST_FILE_TIMEOUT: 600
+          HERMES_TEST_SLICE: ${{ matrix.slice }}/8
+          HERMES_TEST_WORKERS: '4'
+          HERMES_TEST_FILE_TIMEOUT: '600'
+          # Do not turn an intermittent failure into a green required status.
+          HERMES_TEST_FILE_RETRIES: '0'
+          OPENROUTER_API_KEY: ''
+          OPENAI_API_KEY: ''
+          NOUS_API_KEY: ''
+
+  test:
+    # KEEP THIS JOB NAME: the existing ruleset requires this exact status context.
+    name: Fermes unprivileged PR tests
+    needs: [classify, quality, regression]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail closed unless the classifier and every required slice passed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          if set(needs) != {"classify", "quality", "regression"}:
+              sys.exit("missing or unexpected source-gate dependencies")
+          if needs["classify"]["result"] != "success":
+              sys.exit("trusted source classifier did not succeed")
+          outputs = needs["classify"].get("outputs", {})
+          if not re.fullmatch(r"[0-9a-f]{40}", outputs.get("merge_sha", "")):
+              sys.exit("trusted classifier did not pin a valid synthetic merge SHA")
+          source = outputs.get("source")
+          if source == "true":
+              if needs["quality"]["result"] != "success":
+                  sys.exit("source quality/gate tests did not succeed")
+              if needs["regression"]["result"] != "success":
+                  sys.exit("one or more of the eight regression slices failed, skipped or were cancelled")
+              print("source PR: quality and every required regression slice passed")
+          elif source == "false":
+              if needs["quality"]["result"] != "skipped" or needs["regression"]["result"] != "skipped":
+                  sys.exit("docs-only PR unexpectedly started source jobs")
+              print("docs-only PR: trusted source classifier approved bypass")
+          else:
+              sys.exit("source classifier returned unknown or missing result")
+          PY
