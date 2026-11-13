@@ -13,6 +13,7 @@ tool calls or reasoning.
 
 import logging
 import time
+import uuid
 import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 # The delegate_tool_* siblings hold the pieces split out of this module; every name callers or patching tests reach as
 # ``tools.delegate_tool.<name>`` is re-imported here. Mutable flag globals live only in their owning module.
 from tools.delegate_tool_child_run import (
-    _ChildRun, _attach_child, _build_child_goal_message, _build_result_entry, _dump_subagent_timeout_diagnostic, _fabricated_entry,
+    _ChildRun, _attach_child, _build_child_goal_message, _build_result_entry, _close_child, _detach_child,
+    _dump_subagent_timeout_diagnostic, _fabricated_entry,
     _lease_child_credential, _merge_late_steer, _register_child, _start_heartbeat, _validate_child_output_schema,
 )
 from tools.delegate_tool_config import (
@@ -415,7 +417,8 @@ def _credential_overrides(creds: dict[str, Any], routing_cfg: dict[str, Any]) ->
 def _build_children(
     task_list: list[dict[str, Any]], task_schemas: list[Optional[dict[str, Any]]], creds: dict[str, Any], *,
     top_role: str, max_iterations: int, parent_agent, routing_cfg: dict[str, Any],
-    live_deleg_id: Optional[str], live_writers: list, task_images: Optional[list[Optional[list[str]]]] = None,
+    live_deleg_id: Optional[str], live_writers: list, verification_attempt_id: str,
+    verification_authority: str, task_images: Optional[list[Optional[list[str]]]] = None,
 ) -> tuple[list[tuple], Optional[str]]:
     """Build every child on the main thread (construction is not thread-safe);
     ``(children, None)`` or ``([], error)`` on an explicit-pin preflight failure."""
@@ -440,6 +443,32 @@ def _build_children(
         if _task_schema is not None:
             with _quiet("Could not attach output schema to child %d", i):
                 child._delegate_output_schema = _task_schema
+        child._delegate_verification_owner = parent_agent
+        child._delegate_verification_session_id = str(getattr(parent_agent, "session_id", None) or "")
+        child._delegate_verification_attempt_id = verification_attempt_id
+        child._delegate_verification_authority = verification_authority
+        try:
+            from agent.verification_evidence import arm_delegated_verification
+
+            armed = arm_delegated_verification(
+                session_id=child._delegate_verification_session_id, attempt_id=verification_attempt_id,
+                task_index=i, authority=verification_authority,
+            )
+        except Exception:
+            logger.debug("FHM-005 _build_children failed", exc_info=True)
+            armed = False
+        if not armed:
+            for previous_index, _, built in children:
+                _detach_child(parent_agent, built)
+                _close_child(built, "Failed to close child after verification arm failure")
+                from agent.verification_evidence import disarm_delegated_verification
+                disarm_delegated_verification(
+                    session_id=child._delegate_verification_session_id, attempt_id=verification_attempt_id,
+                    task_index=previous_index, authority=verification_authority,
+                )
+            _detach_child(parent_agent, child)
+            _close_child(child, "Verification state arm failed")
+            return [], "could not durably arm delegated verification"
         # Validated per-task images; absent on image-less tasks, which keep the text-only goal turn.
         _t_images = task_images[i] if task_images and i < len(task_images) else None
         if _t_images:
@@ -575,9 +604,15 @@ def delegate_task(
     _announce_batch(parent_agent, len(task_list), live_deleg_id)
     origin = _capture_origin()
 
+    from agent.verification_evidence import verification_authority as _verification_authority
+    verification_attempt_id = uuid.uuid4().hex
+    verification_owner_authority = _verification_authority(parent_agent)
+
     children, err = _build_children(
         task_list, task_schemas, creds, top_role=top_role, max_iterations=default_max_iter, parent_agent=parent_agent,
-        routing_cfg=routing_cfg, live_deleg_id=live_deleg_id, live_writers=live_writers, task_images=task_images,
+        routing_cfg=routing_cfg, live_deleg_id=live_deleg_id, live_writers=live_writers,
+        verification_attempt_id=verification_attempt_id, verification_authority=verification_owner_authority,
+        task_images=task_images,
     )
     if err:
         return tool_error(err)

@@ -13,6 +13,7 @@ from agent.verification_evidence import (
     record_verify_run,
     verification_status,
 )
+from agent.coding_context import project_facts_for
 
 @pytest.fixture(autouse=True)
 def _ledger_on(monkeypatch):
@@ -33,6 +34,21 @@ def _node_project(root: Path) -> None:
 
 def _python_project(root: Path) -> None:
     (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+
+def test_empty_git_directory_is_not_a_workspace_root(tmp_path):
+    """A host-level empty .git directory must not hide a real project marker."""
+    empty_git = tmp_path / "empty-ancestor"
+    empty_git.mkdir()
+    (empty_git / ".git").mkdir()
+    project = empty_git / "project"
+    project.mkdir()
+    _python_project(project)
+
+    facts = project_facts_for(project)
+
+    assert facts is not None
+    assert facts["root"] == str(project.resolve())
 
 
 

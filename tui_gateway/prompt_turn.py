@@ -310,7 +310,12 @@ def _commit_turn_history(
 def _result_status(result: dict) -> str:
     return (
         "interrupted" if result.get("interrupted")
-        else "error" if result.get("error") else "complete")
+        else "error" if (
+            result.get("error")
+            or result.get("failed")
+            or result.get("verification_unresolved")
+            or result.get("turn_exit_reason") == "verification_unresolved"
+        ) else "complete")
 
 
 def _turn_outcome(result: Any, error_surface: dict | None = None) -> tuple[Any, str, str | None]:

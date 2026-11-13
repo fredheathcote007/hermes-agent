@@ -60,6 +60,27 @@ def test_open_db_closes_the_half_open_connection_when_initialize_raises(monkeypa
         opened[0].execute("SELECT 1")
 
 
+def test_existing_only_opens_exact_database_with_reserved_uri_characters(tmp_path):
+    """SQLite URI fragments must not redirect an existing-only open to another path."""
+    db = tmp_path / "verification#ledger.db"
+    created = sqlite_util.open_db(db, db_label="verification#ledger.db", wal=False)
+    try:
+        created.execute("CREATE TABLE marker (value TEXT NOT NULL)")
+        created.execute("INSERT INTO marker(value) VALUES ('known')")
+        created.commit()
+    finally:
+        created.close()
+
+    opened = sqlite_util.open_db(
+        db, db_label="verification#ledger.db", wal=False, existing_only=True
+    )
+    try:
+        assert opened.execute("SELECT value FROM marker").fetchone()[0] == "known"
+    finally:
+        opened.close()
+    assert not (tmp_path / "verification").exists()
+
+
 # Every store that opens its own SQLite file (path -> module attribute holding the opener).
 _STORE_OPENERS = (
     ("agent.verification_evidence", "_connect"),
