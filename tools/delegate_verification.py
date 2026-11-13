@@ -22,8 +22,29 @@ def record_child_verification(
 ) -> tuple[bool, bool]:
     """Persist exact child telemetry and return ``(used_command, unobservable)``."""
     from tools.delegate_tool_child_run import _build_tool_trace
+    from tools.delegate_effect_corroboration import corroborate_child_effects
 
+    child._delegate_effect_observation = None
     tool_trace = _build_tool_trace(result.get("messages") or [])
+    from agent.verification_stop import outcome_verification_mode
+
+    # Observations are an explicitly advisory surface.  In particular, do not
+    # turn the legacy strict ledger path into an extra filesystem/Git probe.
+    mode = outcome_verification_mode(agent=parent)
+    child_observation = None
+    if mode == "advisory":
+        child_observation = corroborate_child_effects(
+            result.get("messages") or [],
+            allowed_paths={str(path) for path in child_paths},
+            git_intent=getattr(parent, "_delegate_verification_intent", None),
+            task_id=getattr(child, "_current_task_id", None),
+            completed=result.get("completed") is True,
+            failed=bool(result.get("failed") or result.get("error") or result.get("interrupted")),
+            truncated=result.get("completed") is not True and not result.get("failed")
+            and not result.get("error") and not result.get("interrupted"),
+        )
+    if child_observation is not None:
+        child._delegate_effect_observation = child_observation
     file_mutation_tools = {"write_file", "patch"}
     tool_failed = any(item.get("status") != "ok" for item in tool_trace)
     used_command = any(
