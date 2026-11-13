@@ -19,6 +19,7 @@ from hermes_constants import get_hermes_home
 
 
 _DB_LOCK = threading.Lock()
+_KNOWN_DELEGATED_LEDGER_BINDINGS: set[tuple[str, str, str]] = set()
 _MAX_OUTPUT_SUMMARY_CHARS = 2000
 _MAX_EVIDENCE_AGE_DAYS = 30
 _MAX_EVENTS_PER_SESSION_ROOT = 100
@@ -86,6 +87,25 @@ _SCHEMA_DDL = (
         CREATE INDEX IF NOT EXISTS idx_verification_events_session_root
         ON verification_events(session_id, root, id DESC)
         """,
+    """
+        CREATE TABLE IF NOT EXISTS delegated_verification_pending (
+            pending_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            attempt_id TEXT NOT NULL,
+            task_index INTEGER NOT NULL,
+            authority TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('running','completed','failed','unknown')),
+            paths_json TEXT NOT NULL DEFAULT '[]',
+            unobservable INTEGER NOT NULL DEFAULT 0 CHECK (unobservable IN (0,1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (session_id, attempt_id, task_index, authority)
+        )
+        """,
+    """
+        CREATE INDEX IF NOT EXISTS idx_delegated_verification_owner
+        ON delegated_verification_pending(session_id, authority, state)
+        """,
 )
 
 
@@ -119,12 +139,67 @@ def _db_path() -> Path:
     return get_hermes_home() / "verification_evidence.db"
 
 
+def _delegated_binding_key(session_id: str, authority: str) -> tuple[str, str, str]:
+    return (str(_db_path()), session_id, authority)
+
+
+def _continuity_marker_key(session_id: str, authority: str) -> str:
+    return f"hermes.delegated_verification.armed:{session_id}:{authority}"
+
+
+def _write_ledger_continuity_marker(session_id: str, authority: str) -> bool:
+    """Record an armed ledger in the existing profile state store when available.
+
+    The verification ledger remains the source of pending rows. This small state_meta marker only
+    distinguishes a genuinely new profile from a previously armed ledger that disappeared between
+    process runs; it never reconstructs or verifies a missing row.
+    """
+    state_db = get_hermes_home() / "state.db"
+    if not state_db.is_file():
+        return True
+    try:
+        with sqlite3.connect(state_db, timeout=2) as conn:
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='state_meta'"
+            ).fetchone()
+            if table is None:
+                return True
+            conn.execute(
+                "INSERT INTO state_meta(key, value) VALUES (?, '1') "
+                "ON CONFLICT(key) DO UPDATE SET value='1'",
+                (_continuity_marker_key(session_id, authority),),
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _has_ledger_continuity_marker(session_id: str, authority: str) -> bool:
+    key = _delegated_binding_key(session_id, authority)
+    if key in _KNOWN_DELEGATED_LEDGER_BINDINGS:
+        return True
+    state_db = get_hermes_home() / "state.db"
+    if not state_db.is_file():
+        return False
+    try:
+        with sqlite3.connect(state_db, timeout=2) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM state_meta WHERE key=?",
+                (_continuity_marker_key(session_id, authority),),
+            ).fetchone()
+        return row is not None
+    except Exception:
+        # A broken continuity store is itself not evidence that the ledger is new.
+        return True
+
+
 def _ledger_enabled() -> bool:
     """The ledger exists only to feed verify-on-stop; when that guard is off nothing may
     record, read, or even create the database (an unconsumed ledger is pure disk churn)."""
-    from agent.verification_stop import verify_on_stop_enabled
+    from agent.verification_stop import outcome_verification_mode
 
-    return verify_on_stop_enabled()
+    return outcome_verification_mode() != "off"
 
 
 def _connect() -> sqlite3.Connection:
@@ -626,3 +701,150 @@ def verification_status(*, session_id: str | None, cwd: str | Path | None) -> di
 
         evidence = dict(event)
         return {"status": "stale" if stale else evidence["status"], **result, "evidence": evidence}
+
+
+def verification_authority(agent: Any) -> str:
+    """Return the stable parent authority used for delegated child receipts."""
+    session_id = str(getattr(agent, "session_id", None) or "default")
+    try:
+        from gateway.session_context import get_session_env
+
+        ui_session_id = str(get_session_env("HERMES_UI_SESSION_ID", "") or "")
+    except Exception:
+        ui_session_id = ""
+    return f"ui:{ui_session_id}" if ui_session_id else f"session:{session_id}"
+
+
+def arm_delegated_verification(
+    *, session_id: str | None, attempt_id: str | None, task_index: int, authority: str,
+) -> bool:
+    """Durably arm one child before dispatch; exact duplicate arms are idempotent."""
+    if not _ledger_enabled():
+        return True
+    sid, attempt, auth = str(session_id or ""), str(attempt_id or ""), str(authority or "")
+    if not sid or not attempt or not auth or type(task_index) is not int or task_index < 0:
+        return False
+    now = _utc_now()
+    pending_id = f"{sid}:{attempt}:{task_index}:{auth}"
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO delegated_verification_pending("
+                " pending_id, session_id, attempt_id, task_index, authority, state,"
+                " paths_json, unobservable, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, 'running', '[]', 0, ?, ?)",
+                (pending_id, sid, attempt, task_index, auth, now, now),
+            )
+            conn.commit()
+        if not _write_ledger_continuity_marker(sid, auth):
+            return False
+        _KNOWN_DELEGATED_LEDGER_BINDINGS.add(_delegated_binding_key(sid, auth))
+        return True
+    except Exception:
+        return False
+
+
+def update_delegated_verification(
+    *, session_id: str | None, attempt_id: str | None, task_index: int, authority: str,
+    state: str, paths: Any = (), unobservable: bool = False,
+) -> bool:
+    """Update only the exact armed binding; late, foreign, and duplicate callbacks are rejected."""
+    if not _ledger_enabled():
+        return True
+    sid, attempt, auth = str(session_id or ""), str(attempt_id or ""), str(authority or "")
+    if state not in {"running", "completed", "failed", "unknown"}:
+        return False
+    if not sid or not attempt or not auth or type(task_index) is not int or task_index < 0:
+        return False
+    incoming = {str(path) for path in (paths or ()) if path}
+    pending_id = f"{sid}:{attempt}:{task_index}:{auth}"
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            row = conn.execute(
+                "SELECT paths_json, unobservable, state FROM delegated_verification_pending "
+                "WHERE pending_id=? AND session_id=? AND attempt_id=? AND task_index=? AND authority=?",
+                (pending_id, sid, attempt, task_index, auth),
+            ).fetchone()
+            if row is None or row["state"] != "running":
+                return False
+            merged = sorted(set(_load_changed_paths(row["paths_json"])) | incoming)
+            if state == "completed" and not merged and not unobservable:
+                conn.execute("DELETE FROM delegated_verification_pending WHERE pending_id=?", (pending_id,))
+            else:
+                conn.execute(
+                    "UPDATE delegated_verification_pending SET state=?, paths_json=?, unobservable=?, updated_at=? "
+                    "WHERE pending_id=?",
+                    (state, json.dumps(merged), int(bool(row["unobservable"] or unobservable)), _utc_now(), pending_id),
+                )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def disarm_delegated_verification(
+    *, session_id: str | None, attempt_id: str | None, task_index: int, authority: str,
+) -> bool:
+    """Remove an arm only when child construction never reached dispatch."""
+    if not _ledger_enabled():
+        return True
+    sid, attempt, auth = str(session_id or ""), str(attempt_id or ""), str(authority or "")
+    if not sid or not attempt or not auth or type(task_index) is not int or task_index < 0:
+        return False
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            conn.execute(
+                "DELETE FROM delegated_verification_pending WHERE pending_id=?",
+                (f"{sid}:{attempt}:{task_index}:{auth}",),
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def pending_delegated_verification(*, session_id: str | None, authority: str) -> dict[str, Any]:
+    """Read pending state fail-closed; missing state is different from a new profile."""
+    if not _ledger_enabled():
+        return {"paths": set(), "unknown": False, "rows": [], "error": False}
+    sid, auth = str(session_id or ""), str(authority or "")
+    if not sid or not auth:
+        return {"paths": set(), "unknown": True, "rows": [], "error": True}
+    db_path = _db_path()
+    if not db_path.exists() and _has_ledger_continuity_marker(sid, auth):
+        return {"paths": set(), "unknown": True, "rows": [], "error": True}
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            rows = conn.execute(
+                "SELECT attempt_id, task_index, authority, state, paths_json, unobservable "
+                "FROM delegated_verification_pending WHERE session_id=?",
+                (sid,),
+            ).fetchall()
+        paths: set[str] = set()
+        unknown = False
+        for row in rows:
+            paths.update(str(path) for path in _load_changed_paths(row["paths_json"]) if path)
+            unknown = unknown or row["authority"] != auth or bool(row["unobservable"]) or row["state"] in {
+                "running", "failed", "unknown",
+            }
+        return {"paths": paths, "unknown": unknown, "rows": [dict(row) for row in rows], "error": False}
+    except Exception:
+        return {"paths": set(), "unknown": True, "rows": [], "error": True}
+
+
+def clear_verified_delegated_verification(*, session_id: str | None, authority: str) -> bool:
+    """Retire only completed, observable rows after the strict verifier has passed."""
+    if not _ledger_enabled():
+        return True
+    sid, auth = str(session_id or ""), str(authority or "")
+    try:
+        with _DB_LOCK, _transaction() as conn:
+            conn.execute(
+                "DELETE FROM delegated_verification_pending WHERE session_id=? AND authority=? "
+                "AND state='completed' AND unobservable=0",
+                (sid, auth),
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False

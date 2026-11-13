@@ -217,7 +217,8 @@ DEFAULT_CONFIG = {
         # verification evidence exists or the agent explains why it can't check (bounded loop,
         # passive ledger). False (default) because the nudges proved more noise than signal; true =
         # force on everywhere; "auto" = on for interactive coding surfaces and programmatic callers,
-        # off for messaging surfaces. Doc/markdown/skill-only edits never fire.
+        # off for messaging surfaces. "advisory" preserves useful delegated output while reporting
+        # opaque effects as unverified. Doc/markdown/skill-only edits never fire.
         "verify_on_stop": False,
         # Inactivity warning (seconds), once per run before gateway_timeout; no interrupt. 0 = off.
         "gateway_timeout_warning": 900,

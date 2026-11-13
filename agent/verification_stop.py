@@ -79,6 +79,42 @@ def verify_on_stop_enabled(config: dict[str, Any] | None = None) -> bool:
     return token in _TRUTHY_TOKENS
 
 
+def outcome_verification_mode(
+    config: dict[str, Any] | None = None, *, agent: Any = None,
+) -> str:
+    """Resolve delegated outcome assurance without changing legacy verify-on-stop semantics.
+
+    ``agent.verify_on_stop: advisory`` is the one explicit config.yaml opt-in. Existing boolean
+    and environment forms remain strict; an agent-local mode is accepted for the turn seam and
+    tests without making it a new environment setting.
+    """
+    local = getattr(agent, "_verification_mode", None) if agent is not None else None
+    if isinstance(local, str):
+        token = local.strip().lower()
+        if token in {"off", "advisory", "strict"}:
+            return token
+    env = os.environ.get("HERMES_VERIFY_ON_STOP")
+    if env is not None:
+        return "strict" if env.strip().lower() not in _FALSY_TOKENS else "off"
+    if config is None:
+        try:
+            from hermes_cli.config import load_config_readonly
+
+            config = load_config_readonly()
+        except Exception:
+            config = {}
+    agent_cfg = (config or {}).get("agent") if isinstance(config, dict) else None
+    value = agent_cfg.get("verify_on_stop") if isinstance(agent_cfg, dict) else None
+    if isinstance(value, bool):
+        return "strict" if value else "off"
+    token = value.strip().lower() if isinstance(value, str) else ""
+    if token == "advisory":
+        return "advisory"
+    if token == "strict" or token == "auto":
+        return "strict" if verify_on_stop_enabled(config) else "off"
+    return "off"
+
+
 def _candidate_cwds(paths: Iterable[str]) -> list[Path]:
     """Distinct resolved directories (a file's parent) for the edited paths, in order."""
     seen: dict[str, None] = {}
@@ -112,6 +148,36 @@ def _verification_snapshot(
         if str(status.get("status") or "unverified") != "passed":
             return status, facts
     return first_snapshot
+
+
+def verification_unresolved(*, session_id: str | None, changed_paths: Iterable[str]) -> bool:
+    """Return the legacy strict verdict for changed code paths."""
+    paths = sorted({str(path) for path in changed_paths if path and not _is_non_code_path(str(path))})
+    if not paths:
+        return False
+    try:
+        from agent.coding_context import project_facts_for
+        from agent.verification_evidence import verification_status
+
+        candidates = _candidate_cwds(paths)
+        if not candidates:
+            return True
+        for cwd in candidates:
+            facts = project_facts_for(cwd)
+            if not facts:
+                return True
+            status = verification_status(session_id=session_id, cwd=cwd)
+            evidence = status.get("evidence") if isinstance(status.get("evidence"), dict) else {}
+            if not (
+                status.get("status") == "passed"
+                and evidence.get("kind") == "verify"
+                and str(evidence.get("session_id") or "") == str(session_id or "default")
+                and evidence.get("scope") == "full"
+            ):
+                return True
+        return False
+    except Exception:
+        return True
 
 
 def _format_changed_paths(paths: list[str]) -> str:
@@ -227,4 +293,4 @@ def build_verify_on_stop_nudge(
     )
 
 
-__all__ = ["build_verify_on_stop_nudge", "verify_on_stop_enabled"]
+__all__ = ["build_verify_on_stop_nudge", "outcome_verification_mode", "verification_unresolved", "verify_on_stop_enabled"]
