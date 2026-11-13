@@ -209,19 +209,19 @@ def test_profile_scoped_auto_apply_with_real_config_and_concurrency(tmp_path):
         finally:
             reset_hermes_home_override(token)
 
-    # Overlap context-scoped profile reads to catch accidental global-home use.
-    for iteration in range(40):
-        barrier = Barrier(2)
+    # Reuse one thread pool across iterations, while synchronising each
+    # iteration at its own barrier to detect cross-profile context leakage.
+    def check_profile(home, expected, barrier):
+        token = set_hermes_home_override(home)
+        try:
+            barrier.wait(timeout=5)
+            return cad.auto_apply_enabled() is expected
+        finally:
+            reset_hermes_home_override(token)
 
-        def check_profile(home, expected):
-            token = set_hermes_home_override(home)
-            try:
-                barrier.wait(timeout=5)
-                return cad.auto_apply_enabled() is expected
-            finally:
-                reset_hermes_home_override(token)
-
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            checks = [pool.submit(check_profile, home, expected)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for iteration in range(40):
+            barrier = Barrier(2)
+            checks = [pool.submit(check_profile, home, expected, barrier)
                       for home, expected in profiles]
             assert all(f.result(timeout=8) for f in checks), iteration
