@@ -633,7 +633,16 @@ def _build_result_entry(
         "_child_role": getattr(child, "_delegate_role", None),
         "_child_cost_usd": float(_cost or 0.0) if isinstance(_cost, (int, float)) else 0.0,
     }
-    if any(item.get("effect_capable") for item in entry["tool_trace"]):
+    has_advisory_git_intent = False
+    if parent is not None and isinstance(getattr(parent, "_delegate_verification_intent", None), dict):
+        from agent.verification_stop import outcome_verification_mode
+
+        has_advisory_git_intent = outcome_verification_mode(agent=parent) == "advisory"
+    if any(item.get("effect_capable") for item in entry["tool_trace"]) or has_advisory_git_intent:
+        entry["verification_status"] = "unverified"
+    observation = getattr(child, "_delegate_effect_observation", None)
+    if isinstance(observation, dict) and observation.get("status") == "observed":
+        entry["effect_observation"] = observation
         entry["verification_status"] = "unverified"
     # Model-visible per-delegation spend (unlike _child_cost_usd above).
     entry["cost_usd"] = round(entry["_child_cost_usd"], 6)
