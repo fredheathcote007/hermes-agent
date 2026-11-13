@@ -85,15 +85,20 @@ jobs:
           enable-cache: false
       - name: Prepare locked test environment
         working-directory: candidate
-        run: uv sync --locked --python 3.14 --extra all --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --group dev --group test --no-install-project
+        run: |
+          # An in-tree .venv makes updater tests using fake checkouts redirect
+          # to the CI candidate via update_owning_install. Keep the interpreter
+          # in this job's disposable runner temp directory instead.
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/fermes-source-venv" uv sync --locked --python 3.14 --extra all --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --group dev --group test --no-install-project
       - name: Blocking lint and health checks
         working-directory: candidate
-        run: .venv/bin/python scripts/check --only ruff,health
+        run: |
+          "$RUNNER_TEMP/fermes-source-venv/bin/python" scripts/check --only ruff,health
       - name: All focused CI gate tests
         working-directory: candidate
         run: scripts/run_tests.sh
         env:
-          HERMES_PYTHON: ${{ github.workspace }}/candidate/.venv/bin/python
+          HERMES_PYTHON: ${{ runner.temp }}/fermes-source-venv/bin/python
           HERMES_TEST_PATHS: tests/ci/test_fermes_gate.py
           HERMES_TEST_WORKERS: '2'
           HERMES_TEST_FILE_TIMEOUT: '600'
@@ -204,12 +209,16 @@ jobs:
           enable-cache: false
       - name: Prepare locked test environment
         working-directory: candidate
-        run: uv sync --locked --python 3.14 --extra all --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --group dev --group test --no-install-project
+        run: |
+          # An in-tree .venv makes updater tests using fake checkouts redirect
+          # to the CI candidate via update_owning_install. Keep the interpreter
+          # in this job's disposable runner temp directory instead.
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/fermes-source-venv" uv sync --locked --python 3.14 --extra all --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --group dev --group test --no-install-project
       - name: Run entire bounded repository regression slice
         working-directory: candidate
         run: scripts/run_tests.sh
         env:
-          HERMES_PYTHON: ${{ github.workspace }}/candidate/.venv/bin/python
+          HERMES_PYTHON: ${{ runner.temp }}/fermes-source-venv/bin/python
           HERMES_TEST_SLICE: ${{ matrix.slice }}/8
           HERMES_TEST_WORKERS: '4'
           HERMES_TEST_FILE_TIMEOUT: '600'
