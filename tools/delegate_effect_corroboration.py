@@ -89,6 +89,12 @@ def _has_symlink_component(path: Path) -> bool:
     return False
 
 
+def _normalized_path(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return os.path.normcase(os.path.normpath(value))
+
+
 def _resolved_local_path(raw_path: str, allowed_paths: set[str], task_id: str | None) -> Path | None:
     if not os.path.isabs(raw_path) or _task_backend(task_id) != "local":
         return None
@@ -101,7 +107,9 @@ def _resolved_local_path(raw_path: str, allowed_paths: set[str], task_id: str | 
         resolved = _resolve_path_for_task(raw_path, task_id or "default")
     except (ImportError, AttributeError, OSError, ValueError, RuntimeError):
         return None
-    if not isinstance(resolved, Path) or str(resolved) not in allowed_paths:
+    normalized_resolved = _normalized_path(str(resolved)) if isinstance(resolved, Path) else None
+    normalized_allowed = {_normalized_path(path) for path in allowed_paths}
+    if normalized_resolved is None or normalized_resolved not in normalized_allowed:
         return None
     return resolved
 
@@ -167,7 +175,9 @@ def _file_observation(messages: Any, allowed_paths: set[str], *, task_id: str | 
             if not values or any(not isinstance(item, str) for item in values):
                 return None
             reported.extend(values)
-    if reported and set(reported) != {str(path)}:
+    normalized_path = _normalized_path(str(path))
+    normalized_reported = {_normalized_path(value) for value in reported}
+    if normalized_path is None or (reported and normalized_reported != {normalized_path}):
         return None
     actual = _safe_local_bytes(path)
     if actual is None or actual != expected:
@@ -202,6 +212,15 @@ def _git_run(cwd: str, args: list[str]) -> subprocess.CompletedProcess[bytes] | 
         return None
 
 
+def _decode_git_stdout(value: Any) -> str | None:
+    if not isinstance(value, bytes):
+        return None
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def _git_observation(intent: Any) -> dict[str, Any] | None:
     if not isinstance(intent, dict) or intent.get("kind") != "git":
         return None
@@ -217,11 +236,21 @@ def _git_observation(intent: Any) -> dict[str, Any] | None:
     after = _git_run(cwd, ["rev-parse", "--verify", "HEAD"])
     if any(item is None or item.returncode != 0 for item in (before, actual_tree, changed, after)):
         return None
-    if before.stdout.strip().decode() != head or after.stdout.strip().decode() != head:
+    before_text = _decode_git_stdout(before.stdout)
+    after_text = _decode_git_stdout(after.stdout)
+    tree_text = _decode_git_stdout(actual_tree.stdout)
+    if (before_text is None or after_text is None or tree_text is None
+            or before_text.strip() != head or after_text.strip() != head):
         return None
-    if actual_tree.stdout.strip().decode() != tree:
+    if tree_text.strip() != tree:
         return None
-    changed_paths = {item.decode("utf-8") for item in changed.stdout.split(b"\0") if item}
+    changed_paths = set()
+    for item in changed.stdout.split(b"\0"):
+        if item:
+            path = _decode_git_stdout(item)
+            if path is None:
+                return None
+            changed_paths.add(path)
     if not set(paths).issubset(changed_paths):
         return None
     return {"status": "observed", "kind": "git", "head": head, "tree": tree, "paths": paths}
