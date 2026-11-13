@@ -93,6 +93,79 @@ def test_known_active_ledger_loss_after_arm_is_not_first_run_success(
     assert recovered["rows"] == []
 
 
+def test_pending_unlink_after_existence_check_fails_closed_without_recreating_db(
+    monkeypatch, tmp_path
+):
+    """A ledger removed after the preflight check cannot become a new empty ledger."""
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    _clear_known_bindings()
+    binding = {
+        "session_id": "session-race",
+        "attempt_id": "attempt-race",
+        "task_index": 0,
+        "authority": "session:session-race",
+    }
+    assert verification_evidence.arm_delegated_verification(**binding) is True
+    db_path = Path(verification_evidence._db_path())
+    assert db_path.is_file()
+
+    real_connect = verification_evidence._connect
+
+    def unlink_before_open(*, existing_only=False):
+        db_path.unlink()
+        return real_connect(existing_only=existing_only)
+
+    monkeypatch.setattr(verification_evidence, "_connect", unlink_before_open)
+    recovered = verification_evidence.pending_delegated_verification(
+        session_id=binding["session_id"], authority=binding["authority"]
+    )
+
+    assert recovered["unknown"] is True
+    assert recovered["error"] is True
+    assert recovered["rows"] == []
+    assert not db_path.exists()
+    _clear_known_bindings()
+
+
+def test_pending_new_profile_does_not_create_empty_ledger(monkeypatch, tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    db_path = home / "verification_evidence.db"
+
+    state = verification_evidence.pending_delegated_verification(
+        session_id="new-session", authority="session:new-session"
+    )
+
+    assert state == {"paths": set(), "unknown": False, "rows": [], "error": False}
+    assert not db_path.exists()
+
+
+def test_pending_legacy_ledger_adds_delegated_table_safely(monkeypatch, tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_VERIFY_ON_STOP", "1")
+    db_path = home / "verification_evidence.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE legacy_marker (value TEXT)")
+
+    state = verification_evidence.pending_delegated_verification(
+        session_id="legacy-session", authority="session:legacy-session"
+    )
+
+    assert state == {"paths": set(), "unknown": False, "rows": [], "error": False}
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='delegated_verification_pending'"
+        ).fetchone() == (1,)
+
+
 def test_advisory_opaque_effect_keeps_useful_response_without_strict_failure(
     monkeypatch,
 ):

@@ -229,16 +229,21 @@ def _ledger_enabled() -> bool:
     return outcome_verification_mode() != "off"
 
 
-def _connect() -> sqlite3.Connection:
+def _connect(*, existing_only: bool = False) -> sqlite3.Connection:
     from hermes_cli.sqlite_util import open_db
 
-    return open_db(_db_path(), db_label="verification_evidence.db", initialize=_ensure_schema)
+    return open_db(
+        _db_path(),
+        db_label="verification_evidence.db",
+        initialize=_ensure_schema,
+        existing_only=existing_only,
+    )
 
 
-def _transaction():
+def _transaction(*, existing_only: bool = False):
     from hermes_cli.sqlite_util import transaction
 
-    return transaction(_connect())
+    return transaction(_connect(existing_only=existing_only))
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -852,16 +857,19 @@ def pending_delegated_verification(*, session_id: str | None, authority: str) ->
     sid, auth = str(session_id or ""), str(authority or "")
     if not sid or not auth:
         return {"paths": set(), "unknown": True, "rows": [], "error": True}
-    db_path = _db_path()
-    if not db_path.exists() and _has_ledger_continuity_marker(sid, auth):
-        return {"paths": set(), "unknown": True, "rows": [], "error": True}
     try:
-        with _DB_LOCK, _transaction() as conn:
-            rows = conn.execute(
-                "SELECT attempt_id, task_index, authority, state, paths_json, unobservable "
-                "FROM delegated_verification_pending WHERE session_id=?",
-                (sid,),
-            ).fetchall()
+        with _DB_LOCK:
+            db_path = _db_path()
+            if not db_path.exists():
+                if _has_ledger_continuity_marker(sid, auth):
+                    return {"paths": set(), "unknown": True, "rows": [], "error": True}
+                return {"paths": set(), "unknown": False, "rows": [], "error": False}
+            with _transaction(existing_only=True) as conn:
+                rows = conn.execute(
+                    "SELECT attempt_id, task_index, authority, state, paths_json, unobservable "
+                    "FROM delegated_verification_pending WHERE session_id=?",
+                    (sid,),
+                ).fetchall()
         paths: set[str] = set()
         unknown = False
         for row in rows:
