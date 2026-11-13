@@ -59,3 +59,66 @@ def test_noop_child_success_does_not_mint_corroborated_evidence():
 
     assert entry["status"] == "completed"
     assert entry.get("verification_status") != "corroborated"
+
+
+def test_telemetry_failure_resolves_parent_once_and_marks_unobservable_under_lock(
+    monkeypatch,
+):
+    from tools import delegate_verification
+
+    class TrackingLock:
+        def __init__(self):
+            self.held = False
+            self.entered = 0
+
+        def __enter__(self):
+            self.held = True
+            self.entered += 1
+            return self
+
+        def __exit__(self, *_exc):
+            self.held = False
+
+    class Parent(SimpleNamespace):
+        def __setattr__(self, name, value):
+            if name in {
+                "_turn_unobservable_delegated_work",
+                "_pending_unobservable_delegated_work",
+            } and hasattr(self, "_pending_delegated_verification_lock"):
+                assert self._pending_delegated_verification_lock.held
+            super().__setattr__(name, value)
+
+    lock = TrackingLock()
+    parent = Parent(
+        _pending_delegated_verification_lock=lock,
+        _turn_unobservable_delegated_work=False,
+        _pending_unobservable_delegated_work=False,
+    )
+    lookups = []
+
+    def parent_lookup():
+        lookups.append(None)
+        return parent
+
+    child = _child()
+    child._delegate_verification_owner = None
+    child._delegate_parent_ref = parent_lookup
+    monkeypatch.setattr(
+        delegate_verification,
+        "record_child_verification",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("telemetry failed")),
+    )
+
+    entry = _build_result_entry(
+        child,
+        {"final_response": "Done.", "completed": True, "messages": []},
+        0,
+        0.1,
+        _SchemaOutcome(None, None, [], 0),
+    )
+
+    assert entry["status"] == "completed"
+    assert len(lookups) == 1
+    assert lock.entered == 1
+    assert parent._turn_unobservable_delegated_work is True
+    assert parent._pending_unobservable_delegated_work is True

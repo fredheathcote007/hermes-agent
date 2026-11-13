@@ -557,11 +557,11 @@ def _build_result_entry(
     """Parent-visible result entry (status, exit_reason, tool trace, tokens, cost).
     ``status``/``exit_reason``/``truncated`` follow the ``_run_single_child`` contract; a structured failure always
     wins over the summary-presence heuristic (a fallback for legacy/mock results only)."""
+    parent_ref = getattr(child, "_delegate_parent_ref", None)
+    parent = getattr(child, "_delegate_verification_owner", None)
+    if parent is None:
+        parent = parent_ref() if callable(parent_ref) else None
     try:
-        parent_ref = getattr(child, "_delegate_parent_ref", None)
-        parent = getattr(child, "_delegate_verification_owner", None)
-        if parent is None:
-            parent = parent_ref() if callable(parent_ref) else None
         child_paths = set(getattr(child, "_turn_file_mutation_paths", set()) or ())
         from tools.delegate_verification import record_child_verification
 
@@ -569,13 +569,12 @@ def _build_result_entry(
             child=child, result=result, task_index=task_index, parent=parent, child_paths=child_paths,
         )
     except Exception:
-        parent = getattr(child, "_delegate_verification_owner", None)
-        if parent is None:
-            parent_ref = getattr(child, "_delegate_parent_ref", None)
-            parent = parent_ref() if callable(parent_ref) else None
         if parent is not None:
-            parent._turn_unobservable_delegated_work = True
-            parent._pending_unobservable_delegated_work = True
+            from agent.verification_evidence import _get_parent_verification_lock
+
+            with _get_parent_verification_lock(parent):
+                parent._turn_unobservable_delegated_work = True
+                parent._pending_unobservable_delegated_work = True
         logger.debug("delegate mutation telemetry merge failed", exc_info=True)
     finally:
         child._delegate_verification_owner = None

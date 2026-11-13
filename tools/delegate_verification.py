@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 from typing import Any
+
+
+def _get_parent_verification_lock(parent: Any):
+    from agent.verification_evidence import _get_parent_verification_lock as get_lock
+
+    return get_lock(parent)
 
 
 def record_child_verification(
@@ -50,6 +55,7 @@ def record_child_verification(
     )
     attempt_id = str(getattr(child, "_delegate_verification_attempt_id", None) or "")
     authority = str(getattr(child, "_delegate_verification_authority", None) or "")
+    parent_lock = _get_parent_verification_lock(parent) if parent is not None else None
     if session_id and attempt_id and authority:
         from agent.verification_evidence import update_delegated_verification
 
@@ -65,11 +71,8 @@ def record_child_verification(
             )
             and parent is not None
         ):
-            parent._pending_unobservable_delegated_work = True
-    if parent is not None and child_paths:
-        parent_paths = getattr(parent, "_turn_file_mutation_paths", None)
-        if isinstance(parent_paths, set):
-            parent_paths.update(str(path) for path in child_paths if path)
+            with parent_lock:
+                parent._pending_unobservable_delegated_work = True
     if child_paths:
         from agent.coding_context import project_facts_for
         from agent.verification_evidence import mark_workspace_edited
@@ -85,11 +88,11 @@ def record_child_verification(
                     paths=[str(candidate)],
                 )
     if parent is not None and (unobservable or child_paths):
-        lock = getattr(parent, "_pending_delegated_verification_lock", None)
-        if lock is None:
-            lock = threading.RLock()
-            parent._pending_delegated_verification_lock = lock
-        with lock:
+        with parent_lock:
+            if child_paths:
+                parent_paths = getattr(parent, "_turn_file_mutation_paths", None)
+                if isinstance(parent_paths, set):
+                    parent_paths.update(str(path) for path in child_paths if path)
             pending_paths = getattr(
                 parent, "_pending_delegated_verification_paths", None
             )

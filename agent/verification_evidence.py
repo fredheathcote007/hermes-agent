@@ -4,6 +4,8 @@ completion, and never upgrades targeted checks into "repo green"."""
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import json
 import re
 import shlex
@@ -17,9 +19,14 @@ from typing import Any, Optional
 
 from hermes_constants import get_hermes_home
 
+logger = logging.getLogger(__name__)
+
 
 _DB_LOCK = threading.Lock()
+_PARENT_LOCK_INIT = threading.Lock()
 _KNOWN_DELEGATED_LEDGER_BINDINGS: set[tuple[str, str, str]] = set()
+_KNOWN_DELEGATED_LEDGER_BINDINGS_LOCK = threading.Lock()
+_MAX_KNOWN_DELEGATED_LEDGER_BINDINGS = 10_000
 _MAX_OUTPUT_SUMMARY_CHARS = 2000
 _MAX_EVIDENCE_AGE_DAYS = 30
 _MAX_EVENTS_PER_SESSION_ROOT = 100
@@ -147,49 +154,69 @@ def _continuity_marker_key(session_id: str, authority: str) -> str:
     return f"hermes.delegated_verification.armed:{session_id}:{authority}"
 
 
-def _write_ledger_continuity_marker(session_id: str, authority: str) -> bool:
+def _get_parent_verification_lock(parent: Any) -> threading.RLock:
+    """Return the one lock shared by parent mutation producers and finalization."""
+    lock = getattr(parent, "_pending_delegated_verification_lock", None)
+    if lock is None:
+        with _PARENT_LOCK_INIT:
+            lock = getattr(parent, "_pending_delegated_verification_lock", None)
+            if lock is None:
+                lock = threading.RLock()
+                parent._pending_delegated_verification_lock = lock
+    return lock
+
+
+def _write_ledger_continuity_marker(
+    session_id: str, authority: str
+) -> tuple[bool, bool]:
     """Record an armed ledger in the existing profile state store when available.
 
     The verification ledger remains the source of pending rows. This small state_meta marker only
     distinguishes a genuinely new profile from a previously armed ledger that disappeared between
-    process runs; it never reconstructs or verifies a missing row.
+    process runs; it never reconstructs or verifies a missing row. The second return value reports
+    whether the marker was durably stored, so the bounded in-memory fallback is used only when the
+    existing state store cannot carry it.
     """
     state_db = get_hermes_home() / "state.db"
     if not state_db.is_file():
-        return True
+        return True, False
     try:
-        with sqlite3.connect(state_db, timeout=2) as conn:
-            table = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='state_meta'"
-            ).fetchone()
-            if table is None:
-                return True
-            conn.execute(
-                "INSERT INTO state_meta(key, value) VALUES (?, '1') "
-                "ON CONFLICT(key) DO UPDATE SET value='1'",
-                (_continuity_marker_key(session_id, authority),),
-            )
-            conn.commit()
-        return True
+        with contextlib.closing(sqlite3.connect(state_db, timeout=2)) as conn:
+            with conn:
+                table = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='state_meta'"
+                ).fetchone()
+                if table is None:
+                    return True, False
+                conn.execute(
+                    "INSERT INTO state_meta(key, value) VALUES (?, '1') "
+                    "ON CONFLICT(key) DO UPDATE SET value='1'",
+                    (_continuity_marker_key(session_id, authority),),
+                )
+        return True, True
     except Exception:
-        return False
+        logger.debug("FHM-005 _write_ledger_continuity_marker failed", exc_info=True)
+        return False, False
 
 
 def _has_ledger_continuity_marker(session_id: str, authority: str) -> bool:
     key = _delegated_binding_key(session_id, authority)
-    if key in _KNOWN_DELEGATED_LEDGER_BINDINGS:
-        return True
+    with _KNOWN_DELEGATED_LEDGER_BINDINGS_LOCK:
+        if key in _KNOWN_DELEGATED_LEDGER_BINDINGS:
+            return True
     state_db = get_hermes_home() / "state.db"
     if not state_db.is_file():
         return False
     try:
-        with sqlite3.connect(state_db, timeout=2) as conn:
-            row = conn.execute(
-                "SELECT 1 FROM state_meta WHERE key=?",
-                (_continuity_marker_key(session_id, authority),),
-            ).fetchone()
+        with contextlib.closing(sqlite3.connect(state_db, timeout=2)) as conn:
+            with conn:
+                row = conn.execute(
+                    "SELECT 1 FROM state_meta WHERE key=?",
+                    (_continuity_marker_key(session_id, authority),),
+                ).fetchone()
         return row is not None
     except Exception:
+        logger.debug("FHM-005 _has_ledger_continuity_marker failed", exc_info=True)
         # A broken continuity store is itself not evidence that the ledger is new.
         return True
 
@@ -711,6 +738,7 @@ def verification_authority(agent: Any) -> str:
 
         ui_session_id = str(get_session_env("HERMES_UI_SESSION_ID", "") or "")
     except Exception:
+        logger.debug("FHM-005 verification_authority failed", exc_info=True)
         ui_session_id = ""
     return f"ui:{ui_session_id}" if ui_session_id else f"session:{session_id}"
 
@@ -726,7 +754,20 @@ def arm_delegated_verification(
         return False
     now = _utc_now()
     pending_id = f"{sid}:{attempt}:{task_index}:{auth}"
+    cache_key = _delegated_binding_key(sid, auth)
     try:
+        marker_ok, marker_persisted = _write_ledger_continuity_marker(sid, auth)
+        if not marker_ok:
+            return False
+        if marker_persisted:
+            with _KNOWN_DELEGATED_LEDGER_BINDINGS_LOCK:
+                _KNOWN_DELEGATED_LEDGER_BINDINGS.discard(cache_key)
+        else:
+            with _KNOWN_DELEGATED_LEDGER_BINDINGS_LOCK:
+                if cache_key not in _KNOWN_DELEGATED_LEDGER_BINDINGS:
+                    if len(_KNOWN_DELEGATED_LEDGER_BINDINGS) >= _MAX_KNOWN_DELEGATED_LEDGER_BINDINGS:
+                        return False
+                    _KNOWN_DELEGATED_LEDGER_BINDINGS.add(cache_key)
         with _DB_LOCK, _transaction() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO delegated_verification_pending("
@@ -736,11 +777,10 @@ def arm_delegated_verification(
                 (pending_id, sid, attempt, task_index, auth, now, now),
             )
             conn.commit()
-        if not _write_ledger_continuity_marker(sid, auth):
-            return False
-        _KNOWN_DELEGATED_LEDGER_BINDINGS.add(_delegated_binding_key(sid, auth))
         return True
     except Exception:
+        logger.debug("FHM-005 arm_delegated_verification failed", exc_info=True)
+        # A failed sibling arm must not erase a successful arm's continuity key.
         return False
 
 
@@ -779,6 +819,7 @@ def update_delegated_verification(
             conn.commit()
         return True
     except Exception:
+        logger.debug("FHM-005 update_delegated_verification failed", exc_info=True)
         return False
 
 
@@ -800,6 +841,7 @@ def disarm_delegated_verification(
             conn.commit()
         return True
     except Exception:
+        logger.debug("FHM-005 disarm_delegated_verification failed", exc_info=True)
         return False
 
 
@@ -829,6 +871,7 @@ def pending_delegated_verification(*, session_id: str | None, authority: str) ->
             }
         return {"paths": paths, "unknown": unknown, "rows": [dict(row) for row in rows], "error": False}
     except Exception:
+        logger.debug("FHM-005 pending_delegated_verification failed", exc_info=True)
         return {"paths": set(), "unknown": True, "rows": [], "error": True}
 
 
@@ -847,4 +890,5 @@ def clear_verified_delegated_verification(*, session_id: str | None, authority: 
             conn.commit()
         return True
     except Exception:
+        logger.debug("FHM-005 clear_verified_delegated_verification failed", exc_info=True)
         return False

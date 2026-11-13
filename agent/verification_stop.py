@@ -4,12 +4,15 @@ when the model tries to finish right after editing code without fresh evidence."
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
 from agent.compression_marker import elide
+
+logger = logging.getLogger(__name__)
 
 
 _MAX_CHANGED_PATHS_IN_NUDGE = 8
@@ -102,6 +105,7 @@ def outcome_verification_mode(
 
             config = load_config_readonly()
         except Exception:
+            logger.debug("FHM-005 outcome_verification_mode failed", exc_info=True)
             config = {}
     agent_cfg = (config or {}).get("agent") if isinstance(config, dict) else None
     value = agent_cfg.get("verify_on_stop") if isinstance(agent_cfg, dict) else None
@@ -177,6 +181,7 @@ def verification_unresolved(*, session_id: str | None, changed_paths: Iterable[s
                 return True
         return False
     except Exception:
+        logger.debug("FHM-005 verification_unresolved failed", exc_info=True)
         return True
 
 

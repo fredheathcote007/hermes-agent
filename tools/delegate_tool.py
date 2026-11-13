@@ -455,6 +455,7 @@ def _build_children(
                 task_index=i, authority=verification_authority,
             )
         except Exception:
+            logger.debug("FHM-005 _build_children failed", exc_info=True)
             armed = False
         if not armed:
             for previous_index, _, built in children:

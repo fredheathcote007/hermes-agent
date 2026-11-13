@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
-import threading
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _get_parent_verification_lock(agent: Any):
+    from agent.verification_evidence import _get_parent_verification_lock as get_lock
+
+    return get_lock(agent)
 
 
 def verification_state_at_finalize(agent: Any) -> tuple[bool, str | None]:
@@ -16,10 +24,7 @@ def verification_state_at_finalize(agent: Any) -> tuple[bool, str | None]:
     mode = outcome_verification_mode(agent=agent)
     if mode == "off":
         return False, None
-    lock = getattr(agent, "_pending_delegated_verification_lock", None)
-    if lock is None:
-        lock = threading.RLock()
-        agent._pending_delegated_verification_lock = lock
+    lock = _get_parent_verification_lock(agent)
     with lock:
         pending_paths = set(
             getattr(agent, "_pending_delegated_verification_paths", set())
@@ -66,6 +71,7 @@ def verification_state_at_finalize(agent: Any) -> tuple[bool, str | None]:
             return False, None
         return False, "unverified" if unresolved else None
     except Exception:
+        logger.debug("delegated verification finalization failed", exc_info=True)
         return (True, None) if mode == "strict" else (False, "unverified")
 
 
