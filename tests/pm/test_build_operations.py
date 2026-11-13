@@ -13,6 +13,7 @@ from tests.pm._fixtures import (
     _run,
     _wheel,
     build_worker as build_worker,  # noqa: PLC0414 -- the self-alias is load-bearing: it suppresses F811 for the pytest fixture parameter shadowing this import
+    build_worker_with_pth_markers as build_worker_with_pth_markers,  # noqa: PLC0414 -- pytest fixture registration
     client as client,  # noqa: PLC0414 -- the self-alias is load-bearing: it suppresses F811 for the pytest fixture parameter shadowing this import
     isolated_python as isolated_python,  # noqa: PLC0414 -- the self-alias is load-bearing: it suppresses F811 for the pytest fixture parameter shadowing this import
     served as served,  # noqa: PLC0414 -- the self-alias is load-bearing: it suppresses F811 for the pytest fixture parameter shadowing this import
@@ -276,7 +277,9 @@ def test_frozen_export_preserves_git_commit_pin(locked_source, tmp_path, build_t
 
 
 @pytest.mark.parametrize("sealed", [False, True])
-def test_requirements_build_installs_offline_markers_and_seals_only_build_pth(tmp_path, build_tools, sealed):
+def test_requirements_build_installs_offline_markers_and_seals_only_build_pth(
+    tmp_path, build_tools, sealed, build_worker_with_pth_markers,
+):
     from pm import build_requirements_environment
 
     wheels = tmp_path / "wheels with spaces"
@@ -287,6 +290,9 @@ def test_requirements_build_installs_offline_markers_and_seals_only_build_pth(tm
     # Ambient project and interpreter settings cannot escape the explicit build.
     (tmp_path / "uv.toml").write_text('required-version="<0.1"\n', encoding="utf-8")
     poison = tmp_path / "poison"
+    ambient_poison = tmp_path / "ambient-poison"
+    ambient_poison.mkdir()
+    (ambient_poison / "poisoned_ambient.py").write_text("raise AssertionError('ambient poison imported')\n", encoding="utf-8")
     env = dict(build_tools, UV_PROJECT_ENVIRONMENT=str(poison), VIRTUAL_ENV=str(poison),
                UV_PYTHON=str(poison), UV_CACHE_DIR=str(poison), UV_SYSTEM_PYTHON="true")
     before = dict(os.environ)
@@ -296,12 +302,22 @@ def test_requirements_build_installs_offline_markers_and_seals_only_build_pth(tm
         env=env, offline=True, sealed=sealed, explicit=True)
     result = json.loads(_run(
         [str(executable), "-I", "-c", "import sys, json, app_dep, leaf_dep, importlib.util; "
-         "print(json.dumps([app_dep.__version__, leaf_dep.__version__, sys.base_prefix, "
-         "importlib.util.find_spec('missing_dep') is None]))"], cwd=tmp_path, env=build_tools,
+         "print(json.dumps({'app': app_dep.__version__, 'leaf': leaf_dep.__version__, "
+         "'prefix': sys.prefix, 'base_prefix': sys.base_prefix, "
+         "'missing': importlib.util.find_spec('missing_dep') is None, "
+         "'poisoned': importlib.util.find_spec('poisoned_ambient') is not None, "
+         "'poison_path': any('ambient-poison' in p for p in sys.path)}))"], cwd=tmp_path,
+        env={**build_tools, "PYTHONPATH": str(ambient_poison)},
     ))
-    assert result == ["1.0", "1.0", sys.base_prefix, True]
+    assert result == {
+        "app": "1.0", "leaf": "1.0", "prefix": str(out), "base_prefix": sys.base_prefix,
+        "missing": True, "poisoned": False, "poison_path": False,
+    }
+    assert executable.is_file()
     assert executable.parent.parent == out
-    assert bool(list(out.rglob("_virtualenv.pth"))) is not sealed
+    assert bool(list(out.rglob("_virtualenv.pth"))) != sealed
+    assert bool(list(out.rglob("__editable__.controlled.pth"))) != sealed
+    assert list(out.rglob("construction_root.pth"))
     assert not poison.exists()
     assert not Path(build_tools["HERMES_HOME"]).exists()
     assert dict(os.environ) == before
