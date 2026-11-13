@@ -315,9 +315,9 @@ def test_requirements_build_installs_offline_markers_and_seals_only_build_pth(
     }
     assert executable.is_file()
     assert executable.parent.parent == out
-    assert bool(list(out.rglob("_virtualenv.pth"))) is not sealed
-    assert bool(list(out.rglob("__editable__.controlled.pth"))) is not sealed
-    assert bool(list(out.rglob("construction_root.pth"))) is True
+    assert bool(list(out.rglob("_virtualenv.pth"))) != sealed
+    assert bool(list(out.rglob("__editable__.controlled.pth"))) != sealed
+    assert list(out.rglob("construction_root.pth"))
     assert not poison.exists()
     assert not Path(build_tools["HERMES_HOME"]).exists()
     assert dict(os.environ) == before
