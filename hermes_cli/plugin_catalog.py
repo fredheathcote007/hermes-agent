@@ -459,10 +459,12 @@ def _prefer_in_tree_entry(tree: PluginCatalogEntry, live: PluginCatalogEntry, tr
     plugin to its own reviewed source), the checkout always wins. The published doc describes another
     repository's commits and must never silently move an install back to it, however recently it was
     generated."""
-    if tree.sha == live.sha:
-        return False
+    # Repository first: a fork shares its upstream's history, so it can pin the SAME commit from its
+    # own repository; the doc must not swap the source repository back even then.
     if _normalize_repo(tree.repo) != _normalize_repo(live.repo):
         return True
+    if tree.sha == live.sha:
+        return False
     if tree_is_newer is not None:
         return tree_is_newer
     if tree.version and live.version:

@@ -178,6 +178,10 @@ def test_checkout_repointed_to_another_repo_always_outranks_the_live_doc(tmp_pat
     assert by_name["forked"].sha == fork_sha
     assert by_name["forked"].repo == "https://github.com/fork-owner/forked-plugin"
     assert by_name["shared"].sha == upstream  # same repo: unchanged newer-catalog behaviour
+    # A fork can pin the very same commit from its own repository: the repository still wins.
+    same_sha_fork = {**_entry("forked", sha=upstream), "repo": "https://github.com/fork-owner/forked-plugin"}
+    monkeypatch.setattr(pc, "load_catalog", lambda catalog_dir=None: [pc.entry_from_mapping(same_sha_fork, "t")])
+    assert {e.name: e.repo for e in pc.load_catalog_live()}["forked"] == "https://github.com/fork-owner/forked-plugin"
     # Spelling differences of the SAME repository are not a repoint.
     same_repo = {**_entry("shared", sha=fork_sha), "repo": _entry("shared")["repo"].rstrip("/") + ".git"}
     monkeypatch.setattr(pc, "load_catalog", lambda catalog_dir=None: [pc.entry_from_mapping(same_repo, "t")])
