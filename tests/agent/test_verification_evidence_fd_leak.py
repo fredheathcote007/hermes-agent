@@ -130,3 +130,18 @@ def test_schema_init_failure_still_closes_connection(monkeypatch, tmp_path):
 
     assert len(opened) == 1
     assert len(closed) == 1
+
+
+def test_continuity_marker_reads_and_writes_close_connections(monkeypatch, tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    with sqlite3.connect(home / "state.db") as conn:
+        conn.execute("CREATE TABLE state_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+
+    opened, closed = _track_connections(monkeypatch)
+    assert ve._write_ledger_continuity_marker("s1", "session:s1")
+    assert ve._has_ledger_continuity_marker("s1", "session:s1") is True
+
+    assert len(opened) == len(closed)
+    assert set(opened) == set(closed)

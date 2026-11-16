@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,7 +15,6 @@ from hermes_cli.update_contract import COMMIT_BUILD_UPDATE_MESSAGE
 
 @pytest.mark.platforms("posix")
 def test_validator_child_decodes_utf8_and_preserves_strict_errors(tmp_path, monkeypatch):
-    import os
     from scripts.termux.validate_installed import run
 
     # Force a non-UTF-8 locale fallback without pretending to be a different OS.
@@ -53,6 +53,10 @@ def test_validator_accepts_real_cli_refusal_for_installed_identity(artifact, mon
     monkeypatch.setattr(main, "PROJECT_ROOT", root)
     monkeypatch.setattr("hermes_cli.image_provenance.IMAGE_PROVENANCE_PATH", tmp_path / "absent")
     monkeypatch.delenv("HERMES_MANAGED", raising=False)
+    # The fixture deliberately selects the temporary installed root; declare that choice
+    # so an in-tree test venv does not trigger owning-install retargeting.
+    pythonpath = os.pathsep.join(filter(None, (str(root), os.environ.get("PYTHONPATH"))))
+    monkeypatch.setenv("PYTHONPATH", pythonpath)
 
     def unexpected_update(*args, **kwargs):
         pytest.fail("sealed package reached the mutation path")

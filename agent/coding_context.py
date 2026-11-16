@@ -207,7 +207,14 @@ def _resolve_cwd(cwd: Optional[str | Path]) -> Path:
 
 def _git_root(cwd: Path) -> Optional[Path]:
     current = cwd.resolve()
-    return next((p for p in (current, *current.parents) if (p / ".git").exists()), None)
+    for parent in (current, *current.parents):
+        marker = parent / ".git"
+        if marker.is_file():
+            # Linked worktrees use a gitdir file rather than a .git directory.
+            return parent
+        if marker.is_dir() and (marker / "HEAD").is_file():
+            return parent
+    return None
 
 
 def _home() -> Optional[Path]:

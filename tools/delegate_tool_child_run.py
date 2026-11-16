@@ -22,6 +22,7 @@ from tools.delegate_tool_registry import (
 from tools.delegate_tool_results import (
     _extract_output_tail, _looks_like_error_output, _stringify_tool_content, _summarize_tool_arguments,
 )
+from agent.tool_result_classification import tool_may_have_side_effect
 
 logger = logging.getLogger("tools.delegate_tool")  # log-record parity with the origin module
 
@@ -534,6 +535,7 @@ def _build_tool_trace(messages: Any) -> list[dict[str, Any]]:
                 entry_t = {
                     "tool": fn.get("name", "unknown"), "args_bytes": len(arguments),
                     "input_summary": _summarize_tool_arguments(arguments),
+                    "effect_capable": tool_may_have_side_effect(str(fn.get("name", "unknown"))),
                 }
                 tool_trace.append(entry_t)
                 if tc.get("id"):
@@ -555,6 +557,27 @@ def _build_result_entry(
     """Parent-visible result entry (status, exit_reason, tool trace, tokens, cost).
     ``status``/``exit_reason``/``truncated`` follow the ``_run_single_child`` contract; a structured failure always
     wins over the summary-presence heuristic (a fallback for legacy/mock results only)."""
+    parent_ref = getattr(child, "_delegate_parent_ref", None)
+    parent = getattr(child, "_delegate_verification_owner", None)
+    if parent is None:
+        parent = parent_ref() if callable(parent_ref) else None
+    try:
+        child_paths = set(getattr(child, "_turn_file_mutation_paths", set()) or ())
+        from tools.delegate_verification import record_child_verification
+
+        record_child_verification(
+            child=child, result=result, task_index=task_index, parent=parent, child_paths=child_paths,
+        )
+    except Exception:
+        if parent is not None:
+            from agent.verification_evidence import _get_parent_verification_lock
+
+            with _get_parent_verification_lock(parent):
+                parent._turn_unobservable_delegated_work = True
+                parent._pending_unobservable_delegated_work = True
+        logger.debug("delegate mutation telemetry merge failed", exc_info=True)
+    finally:
+        child._delegate_verification_owner = None
     summary = result.get("final_response") or ""
     # "(empty)" is run_agent's give-up sentinel after repeated empty LLM
     # responses (usually a transport bug) — a failure, not a success.
@@ -610,6 +633,8 @@ def _build_result_entry(
         "_child_role": getattr(child, "_delegate_role", None),
         "_child_cost_usd": float(_cost or 0.0) if isinstance(_cost, (int, float)) else 0.0,
     }
+    if any(item.get("effect_capable") for item in entry["tool_trace"]):
+        entry["verification_status"] = "unverified"
     # Model-visible per-delegation spend (unlike _child_cost_usd above).
     entry["cost_usd"] = round(entry["_child_cost_usd"], 6)
     entry["cost_status"] = _cost_status if isinstance(_cost_status, str) and _cost_status else "unknown"
