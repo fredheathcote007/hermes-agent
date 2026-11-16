@@ -453,9 +453,16 @@ def _prefer_in_tree_entry(tree: PluginCatalogEntry, live: PluginCatalogEntry, tr
     """For one entry present in both sources with a different pin: the newer catalog wins. Newer is
     decided by the checkout's catalog commit time vs the doc's ``generated_at`` when both resolve;
     otherwise by the entries' ``version`` labels when both parse; otherwise the live doc wins (a release
-    install's in-tree copy is frozen at release time)."""
+    install's in-tree copy is frozen at release time).
+
+    Exception: when the checkout points the entry at a DIFFERENT source repository (a fork repinning a
+    plugin to its own reviewed source), the checkout always wins. The published doc describes another
+    repository's commits and must never silently move an install back to it, however recently it was
+    generated."""
     if tree.sha == live.sha:
         return False
+    if _normalize_repo(tree.repo) != _normalize_repo(live.repo):
+        return True
     if tree_is_newer is not None:
         return tree_is_newer
     if tree.version and live.version:
