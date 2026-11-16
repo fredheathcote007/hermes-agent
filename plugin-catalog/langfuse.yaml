@@ -1,19 +1,21 @@
 name: langfuse
-repo: https://github.com/NousResearch/hermes-official-plugins
-sha: c2a95963c442f3f23e4bc6fe0da898e1dd1fb63d
+repo: https://github.com/fredheathcote007/fermes-langfuse-plugin
+sha: d770c96b6ae578b83b5e1ae56926009618c976a0
 subdir: langfuse
 description: 'Langfuse observability for Hermes: one trace per turn, one generation per LLM call (usage
   and cost from Hermes'' own pricing, cache and reasoning tokens included), one observation per tool
   call and subagent. Content capture is sanitized by default (metadata-only and full are opt-in); sends
   traces only to the Langfuse project whose keys you set. Formerly built into Hermes core as
-  observability/langfuse; existing users are migrated automatically.'
-maintainer: NousResearch
-tier: official
+  observability/langfuse; existing users are migrated automatically. Fermes build (OBS-002): upstream
+  PR #293 baseline plus fail-closed identity attribution, per-profile client isolation and duplicate
+  project-key rejection.'
+maintainer: fredheathcote007
+tier: community
 category: general
 requires_hermes: ">=0.21.7"
 version: "2.0.0"
 image: https://raw.githubusercontent.com/NousResearch/hermes-official-plugins/c2a95963c442f3f23e4bc6fe0da898e1dd1fb63d/assets/langfuse.jpg
-docs_url: https://github.com/NousResearch/hermes-official-plugins/tree/main/langfuse
+docs_url: https://github.com/fredheathcote007/fermes-langfuse-plugin/tree/d770c96b6ae578b83b5e1ae56926009618c976a0/langfuse
 platforms: []
 capabilities:
   provides_tools: []

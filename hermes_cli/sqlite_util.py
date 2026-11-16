@@ -27,8 +27,12 @@ def open_db(
     check_same_thread: bool = True,
     wal_lock_retries: int = 1,
     initialize: Callable[[sqlite3.Connection], None] | None = None,
+    existing_only: bool = False,
 ) -> sqlite3.Connection:
-    """Open ``path`` (parent created), apply the PRAGMA set, run ``initialize``; closed if anything raises.
+    """Open ``path`` (parent created unless ``existing_only``), apply PRAGMAs, and initialize.
+
+    When ``existing_only`` is true, opening a missing path fails atomically instead of creating it;
+    this is for readers whose absence semantics distinguish a new store from a lost store.
 
     ``busy_timeout_ms`` is the single busy knob: it is passed as ``connect(timeout=)`` AND set as the
     explicit PRAGMA so it is observable. ``wal=True`` goes through ``apply_wal_with_fallback`` — the
@@ -40,9 +44,23 @@ def open_db(
     from hermes_state_wal import apply_wal_with_fallback
 
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if not existing_only:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    connect_target: Path | str = path
+    connect_kwargs = {
+        "timeout": busy_timeout_ms / 1000,
+        "check_same_thread": check_same_thread,
+    }
+    if existing_only:
+        # ``mode=rw`` makes the no-create contract atomic with the SQLite open. The
+        # separate existence check is only a fast path; an unlink after that check
+        # must still fail rather than recreate an empty ledger.
+        # as_uri() percent-encodes reserved characters (notably # and ?) so
+        # SQLite cannot silently open a different path via URI parsing.
+        connect_target = f"{path.absolute().as_uri()}?mode=rw"
+        connect_kwargs["uri"] = True
     # Resolved at call time: fd-leak tests patch ``sqlite3.connect`` through the caller's module.
-    conn = sqlite3.connect(path, timeout=busy_timeout_ms / 1000, check_same_thread=check_same_thread)
+    conn = sqlite3.connect(connect_target, **connect_kwargs)
     try:
         conn.row_factory = row_factory
         conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
