@@ -160,6 +160,33 @@ def test_newer_in_tree_pin_outranks_a_fresh_live_cache(tmp_path, monkeypatch):
     assert {e.name: e.sha for e in pc.load_catalog_live()}["shared"] == old
 
 
+def test_checkout_repointed_to_another_repo_always_outranks_the_live_doc(tmp_path, monkeypatch):
+    """A fork that repins an entry to its own source repository must keep it even after the published
+    doc is regenerated: the doc describes a different repository and must not move installs back to it.
+    The same repository still follows the newer-catalog rule (control)."""
+    upstream, fork_sha = SHA, "c" * 40
+    _fresh_cache(tmp_path, monkeypatch, {"generated_at": "2026-11-16T03:00:00Z",
+                                         "entries": [_entry("forked", sha=upstream), _entry("shared", sha=upstream)],
+                                         "removed": []})
+    forked = {**_entry("forked", sha=fork_sha), "repo": "https://github.com/fork-owner/forked-plugin"}
+    monkeypatch.setattr(pc, "load_catalog", lambda catalog_dir=None: [
+        pc.entry_from_mapping(forked, "t"), pc.entry_from_mapping(_entry("shared", sha=fork_sha), "t")])
+    # The checkout's catalog predates the doc, which would normally hand both entries to the doc.
+    monkeypatch.setattr(pc, "in_tree_catalog_time",
+                        lambda: pc._live_generated_time({"generated_at": "2026-11-16T03:00:00Z"}) - 86400)
+    by_name = {e.name: e for e in pc.load_catalog_live()}
+    assert by_name["forked"].sha == fork_sha
+    assert by_name["forked"].repo == "https://github.com/fork-owner/forked-plugin"
+    assert by_name["shared"].sha == upstream  # same repo: unchanged newer-catalog behaviour
+    # A fork can pin the very same commit from its own repository: the repository still wins.
+    same_sha_fork = {**_entry("forked", sha=upstream), "repo": "https://github.com/fork-owner/forked-plugin"}
+    monkeypatch.setattr(pc, "load_catalog", lambda catalog_dir=None: [pc.entry_from_mapping(same_sha_fork, "t")])
+    assert {e.name: e.repo for e in pc.load_catalog_live()}["forked"] == "https://github.com/fork-owner/forked-plugin"
+    # Spelling differences of the SAME repository are not a repoint.
+    same_repo = {**_entry("shared", sha=fork_sha), "repo": _entry("shared")["repo"].rstrip("/") + ".git"}
+    monkeypatch.setattr(pc, "load_catalog", lambda catalog_dir=None: [pc.entry_from_mapping(same_repo, "t")])
+    assert {e.name: e.sha for e in pc.load_catalog_live()}["shared"] == upstream
+
 def test_live_cache_write_never_truncates_the_previous_copy(tmp_path, monkeypatch):
     """The cache is replaced atomically: a reader racing the writer (or a write that dies half-way)
     sees the whole previous document, never a truncated one."""
