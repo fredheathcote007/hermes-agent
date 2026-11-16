@@ -1,6 +1,6 @@
 name: langfuse
 repo: https://github.com/fredheathcote007/fermes-langfuse-plugin
-sha: d770c96b6ae578b83b5e1ae56926009618c976a0
+sha: 903854431e9d072639a596d68b88b8a4fc9412cd
 subdir: langfuse
 description: 'Langfuse observability for Hermes: one trace per turn, one generation per LLM call (usage
   and cost from Hermes'' own pricing, cache and reasoning tokens included), one observation per tool
@@ -15,7 +15,7 @@ category: general
 requires_hermes: ">=0.21.7"
 version: "2.0.0"
 image: https://raw.githubusercontent.com/NousResearch/hermes-official-plugins/c2a95963c442f3f23e4bc6fe0da898e1dd1fb63d/assets/langfuse.jpg
-docs_url: https://github.com/fredheathcote007/fermes-langfuse-plugin/tree/d770c96b6ae578b83b5e1ae56926009618c976a0/langfuse
+docs_url: https://github.com/fredheathcote007/fermes-langfuse-plugin/tree/903854431e9d072639a596d68b88b8a4fc9412cd/langfuse
 platforms: []
 capabilities:
   provides_tools: []
