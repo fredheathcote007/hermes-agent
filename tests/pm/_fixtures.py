@@ -153,10 +153,26 @@ def worker_toolchain(client, monkeypatch, isolated_python, injection=""):
 
 
 
-@pytest.fixture
-def build_worker(client, isolated_python, monkeypatch):
-    """Inject prepared real tools only inside the independent worker process."""
-    worker_toolchain(client, monkeypatch, isolated_python)
+_PTH_MARKER_INJECTION = """
+from pm.environment import PythonEnvironment
+from pm.environments import site_packages
+_original_environment_check = PythonEnvironment.check
+def _check_then_plant_pth_markers(self):
+    _original_environment_check(self)
+    site = site_packages(self.destination)
+    (site / "_virtualenv.pth").write_text("# controlled unsafe marker\\n", encoding="utf-8")
+    (site / "__editable__.controlled.pth").write_text("# controlled unsafe marker\\n", encoding="utf-8")
+    # Keep any build-provided load-bearing .pth intact; do not replace its target.
+    load_bearing = site / "construction_root.pth"
+    if not load_bearing.exists():
+        load_bearing.write_text("# controlled load-bearing marker", encoding="utf-8")
+PythonEnvironment.check = _check_then_plant_pth_markers
+"""
+
+
+def _configure_build_worker(client, isolated_python, monkeypatch, *, injection=""):
+    """Route build tests through the real PM worker, with optional instrumentation."""
+    worker_toolchain(client, monkeypatch, isolated_python, injection)
     monkeypatch.setattr(client, "is_runtime", lambda: False)
 
     def caller_engine(*args, **kwargs):
@@ -168,4 +184,16 @@ def build_worker(client, isolated_python, monkeypatch):
     }.items():
         for name in names:
             monkeypatch.setattr(importlib.import_module(module), name, caller_engine)
+
+
+@pytest.fixture
+def build_worker(client, isolated_python, monkeypatch):
+    """Inject prepared real tools only inside the independent worker process."""
+    _configure_build_worker(client, isolated_python, monkeypatch)
     return client
+
+
+@pytest.fixture
+def build_worker_with_pth_markers(client, isolated_python, monkeypatch):
+    """Plant markers after real check and before the existing sealed prune."""
+    _configure_build_worker(client, isolated_python, monkeypatch, injection=_PTH_MARKER_INJECTION)

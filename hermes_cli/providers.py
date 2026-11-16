@@ -91,6 +91,15 @@ HERMES_OVERLAYS: dict[str, HermesOverlay] = {
     "vertex": HermesOverlay(auth_type="vertex"),
 }
 
+# models.dev lists CommandCode's ``CMD_API_KEY``; the shipped plugin and its
+# docs use ``COMMANDCODE_API_KEY``. Keep this compatibility alias online-only
+# so an unavailable catalog still resolves the richer plugin profile.
+MODELS_DEV_ONLY_OVERLAYS: dict[str, HermesOverlay] = {
+    "commandcode": HermesOverlay(
+        extra_env_vars=("COMMANDCODE_API_KEY",), base_url_env_var="COMMANDCODE_BASE_URL",
+    ),
+}
+
 
 # -- Resolved provider -------------------------------------------------------
 
@@ -198,7 +207,7 @@ def get_provider(name: str, *, allow_network: bool = True) -> Optional[ProviderD
     mdev_info = _models_dev_info(canonical, allow_network)
     overlay = HERMES_OVERLAYS.get(canonical)
     if mdev_info is not None:
-        ov = overlay or HermesOverlay()
+        ov = MODELS_DEV_ONLY_OVERLAYS.get(canonical) or overlay or HermesOverlay()
         env_vars = list(mdev_info.env)
         for ev in ov.extra_env_vars:
             if ev not in env_vars:
